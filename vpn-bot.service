@@ -1,0 +1,17 @@
+[Unit]
+Description=VPN Management Bot
+After=network.target
+
+[Service]
+Type=simple
+User=vpnuser
+WorkingDirectory=/home/vpnuser/vpn_bot
+ExecStart=/usr/bin/python3 /home/vpnuser/vpn_bot/bot.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
