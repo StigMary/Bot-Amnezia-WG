@@ -279,6 +279,13 @@ def register(bot: telebot.TeleBot):
         if not message.text or message.text.strip() == "":
             bot.reply_to(message, "❌ Пустое сообщение. Отмена.")
             return
+
+        # -- Р—Р°С‰РёС‚Р° РѕС‚ СЃР»СѓС‡Р°Р№РЅРѕР№ СЂР°СЃСЃС‹Р»РєРё РїСЂРё РїРѕРїС‹С‚РєРµ РѕС‚РјРµРЅС‹ --
+        txt = message.text.strip().lower() if message.text else ''
+        abort_kws = ['РєР»РёРµРЅС‚', 'СЃРєРѕСЂРѕСЃС‚СЊ', 'СЃРµСЂРІРµСЂ', 'СЃРµСЂРІРёСЃ', 'РѕС‚РјРµРЅР°', 'cancel', '/cancel']
+        if any(kw in txt for kw in abort_kws):
+            bot.reply_to(message, 'рџљ« Р Р°СЃСЃС‹Р»РєР° РѕС‚РјРµРЅРµРЅР°.')
+            return
         all_users = get_all_users()
         unique_tg_ids = set()
         for data in all_users.values():
