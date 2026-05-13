@@ -1,0 +1,18 @@
+# Template-юнит: посылает Telegram-алерт при падении любого сервиса.
+#
+# Использование (в основном юните):
+#   [Unit]
+#   OnFailure=alert@%n.service
+#
+# Установка:
+#   sudo cp deploy/systemd/alert@.service /etc/systemd/system/
+#   sudo cp deploy/systemd/systemd-telegram-notify.sh /usr/local/bin/
+#   sudo chmod +x /usr/local/bin/systemd-telegram-notify.sh
+#   sudo systemctl daemon-reload
+
+[Unit]
+Description=Telegram alert for failed unit %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/systemd-telegram-notify.sh %i

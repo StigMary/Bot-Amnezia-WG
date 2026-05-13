@@ -38,6 +38,17 @@ from vpn_engine import (
 from handlers.decorators import admin_only, admin_only_callback, rate_limit
 
 
+# --- Markdown v1 escape helper (защита от Bad Request: can't parse entities) ---
+def _md_escape(text):
+    """Экранирует спецсимволы Telegram Markdown v1: _ * ` [ """
+    if text is None:
+        return ""
+    s = str(text)
+    for ch in ('\\', '_', '*', '`', '['):
+        s = s.replace(ch, '\\' + ch)
+    return s
+
+
 def register(bot: telebot.TeleBot):
 
     # ── /start — админка ────────────────────────────────────────────────────
@@ -255,11 +266,19 @@ def register(bot: telebot.TeleBot):
                 return bot.send_message(call.message.chat.id, "📋 Журнал пуст.")
             msg = "📋 *Последние действия:*\n\n"
             for r in rows:
-                ip_s = f" `{r['target_ip']}`" if r["target_ip"] else ""
-                det_s = f" — {r['details']}" if r["details"] else ""
-                msg += f"🕐 {r['timestamp']}\n🔹 {r['action']}{ip_s}{det_s}\n\n"
+                ts   = _md_escape(r["timestamp"])
+                act  = _md_escape(r["action"])
+                ip_s = f" `{r['target_ip']}`" if r["target_ip"] else ""  # в backticks безопасно
+                det_s = f" — {_md_escape(r['details'])}" if r["details"] else ""
+                msg += f"🕐 {ts}\n🔹 {act}{ip_s}{det_s}\n\n"
             for chunk in _split(msg):
-                bot.send_message(call.message.chat.id, chunk, parse_mode="Markdown")
+                try:
+                    bot.send_message(call.message.chat.id, chunk, parse_mode="Markdown")
+                except Exception as e:
+                    # Fallback: отправим без форматирования если что-то всё же не парсится
+                    logger_log = __import__("logging").getLogger("vpn_bot")
+                    logger_log.warning("Markdown parse failed in menu_journal: %s", e)
+                    bot.send_message(call.message.chat.id, chunk)
 
         elif action == "menu_backup":
             bot.send_message(call.message.chat.id, "📦 Собираю бэкап...")

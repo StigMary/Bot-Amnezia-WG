@@ -1,12 +1,13 @@
 [Unit]
-Description=VPN Management Bot
-After=network.target
+Description=VPN Telegram Bot v3.0
+After=network.target docker.service
 
 [Service]
 Type=simple
 User=vpnuser
 WorkingDirectory=/home/vpnuser/vpn_bot
-ExecStart=/usr/bin/python3 /home/vpnuser/vpn_bot/bot.py
+# Виртуальное окружение для изоляции зависимостей (см. requirements.txt)
+ExecStart=/home/vpnuser/vpn_bot/.venv/bin/python bot.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
