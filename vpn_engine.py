@@ -125,10 +125,20 @@ _stats_cache_ttl: float = 30.0   # кэш на 30 секунд
 _stats_lock = threading.Lock()
 
 
+def _wg_cmd(cont: Dict) -> str:
+    """Имя бинарника WG: 'awg' (AmneziaWG) или 'wg'. Конфигурируется через cont['wg_cmd']."""
+    return cont.get("wg_cmd", "awg")
+
+
+def _wg_iface(cont: Dict) -> str:
+    """Имя WG-интерфейса в контейнере. Конфигурируется через cont['wg_iface']."""
+    return cont.get("wg_iface", "awg0")
+
+
 def _poll_container(cont: Dict, db_users: Dict) -> tuple:
     """Опрашивает один контейнер. Возвращает (entries, new_users)."""
     entries, new_users = [], []
-    res = run_vpn_cmd(cont, ["wg", "show", "all", "dump"])
+    res = run_vpn_cmd(cont, [_wg_cmd(cont), "show", "all", "dump"])
     if not res or res.returncode != 0:
         return entries, new_users
     for line in res.stdout.strip().split("\n"):
@@ -259,7 +269,10 @@ def delete_peer(ip: str, server_alias: str) -> None:
     if not target:
         return
 
-    res = run_vpn_cmd(target, ["awg", "show", "awg0", "dump"])
+    wg = _wg_cmd(target)
+    iface = _wg_iface(target)
+
+    res = run_vpn_cmd(target, [wg, "show", iface, "dump"])
     if not res or not res.stdout:
         return
 
@@ -270,8 +283,8 @@ def delete_peer(ip: str, server_alias: str) -> None:
             break
 
     if pub_key:
-        run_vpn_cmd(target, ["awg", "set", "awg0", "peer", pub_key, "remove"])
-        run_vpn_cmd(target, ["awg-quick", "save", "awg0"])
+        run_vpn_cmd(target, [wg, "set", iface, "peer", pub_key, "remove"])
+        run_vpn_cmd(target, [f"{wg}-quick", "save", iface])
 
 
 # ─── Мониторинг (метрики, графики, пинг) ─────────────────────────────────────

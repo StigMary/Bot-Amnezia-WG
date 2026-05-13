@@ -12,12 +12,28 @@ from config import cfg, logger
 
 # ─── Контекстный менеджер соединения ─────────────────────────────────────────
 
+_WAL_INITIALIZED = False
+
+
 @contextlib.contextmanager
 def get_conn():
-    """Потокобезопасное соединение с автокоммитом / роллбэком."""
-    conn = sqlite3.connect(cfg.db_file, check_same_thread=False)
+    """Потокобезопасное соединение с автокоммитом / роллбэком.
+
+    Включает WAL-режим (улучшает конкурентное чтение/запись) и
+    busy_timeout (даёт другим коннектам подождать вместо «database is locked»).
+    """
+    global _WAL_INITIALIZED
+    conn = sqlite3.connect(cfg.db_file, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
     try:
+        if not _WAL_INITIALIZED:
+            with contextlib.suppress(Exception):
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+            _WAL_INITIALIZED = True
+        # busy_timeout — на случай параллельных писем
+        with contextlib.suppress(Exception):
+            conn.execute("PRAGMA busy_timeout=30000")
         yield conn
         conn.commit()
     except Exception:
@@ -165,18 +181,20 @@ ALLOWED_FIELDS = frozenset({"alias", "speed_limit", "tg_user_id", "paid_until", 
 
 
 def update_user_field(ip: str, field: str, value: Any) -> bool:
-    """Обновляет поле пользователя (whitelist полей защищает от SQL-инъекции)."""
+    """Обновляет поле пользователя (whitelist полей защищает от SQL-инъекции).
+
+    Использует атомарный UPSERT (INSERT ... ON CONFLICT DO UPDATE),
+    чтобы исключить race condition между UPDATE и INSERT.
+    """
     if field not in ALLOWED_FIELDS:
         logger.error(f"Запрещённое поле для обновления: '{field}'")
         return False
     with get_conn() as conn:
-        cur = conn.execute(
-            f"UPDATE users SET {field} = ? WHERE ip_address = ?", (value, ip)
+        conn.execute(
+            f"INSERT INTO users (ip_address, {field}) VALUES (?, ?) "
+            f"ON CONFLICT(ip_address) DO UPDATE SET {field} = excluded.{field}",
+            (ip, value),
         )
-        if cur.rowcount == 0:
-            conn.execute(
-                f"INSERT INTO users (ip_address, {field}) VALUES (?, ?)", (ip, value)
-            )
     return True
 
 

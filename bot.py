@@ -6,7 +6,20 @@ import os
 import sys
 import signal
 import contextlib
-import fcntl
+
+try:
+    import fcntl  # POSIX
+    _HAS_FCNTL = True
+except ImportError:
+    fcntl = None
+    _HAS_FCNTL = False
+
+try:
+    import msvcrt  # Windows
+    _HAS_MSVCRT = True
+except ImportError:
+    msvcrt = None
+    _HAS_MSVCRT = False
 
 import telebot
 
@@ -23,15 +36,40 @@ import handlers.client as client_handler
 _lock_file = None
 
 def check_single_instance():
+    """
+    Кросс-платформенная защита от двойного запуска.
+    POSIX: fcntl.flock; Windows: msvcrt.locking; иначе — мягкая проверка PID-файла.
+    """
     global _lock_file
-    _lock_file = open(cfg.pid_file, "w")
     try:
-        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_file = open(cfg.pid_file, "a+")
+    except OSError as e:
+        logger.warning(f"Не удалось открыть pid-файл {cfg.pid_file}: {e}. Пропускаем lock.")
+        return
+
+    if _HAS_FCNTL:
+        try:
+            fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (IOError, OSError):
+            logger.error("Бот уже запущен (flock). Выход.")
+            sys.exit(1)
+    elif _HAS_MSVCRT:
+        try:
+            _lock_file.seek(0)
+            msvcrt.locking(_lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        except (IOError, OSError):
+            logger.error("Бот уже запущен (msvcrt). Выход.")
+            sys.exit(1)
+    else:
+        logger.warning("Нет fcntl/msvcrt — single-instance защита отключена.")
+
+    try:
+        _lock_file.seek(0)
+        _lock_file.truncate()
         _lock_file.write(str(os.getpid()))
         _lock_file.flush()
-    except IOError:
-        logger.error("Бот уже запущен (flock). Выход.")
-        sys.exit(1)
+    except Exception as e:
+        logger.warning(f"Не удалось записать PID в {cfg.pid_file}: {e}")
 
 
 # ─── Graceful shutdown ────────────────────────────────────────────────────────
@@ -80,13 +118,18 @@ def main():
     log_audit("BOT_START")
     logger.info("VPN Bot v3.0 запущен!")
 
-    # Основной цикл
+    # Основной цикл с экспоненциальным backoff
+    import time
+    backoff = 5
+    max_backoff = 300  # 5 минут
     while True:
         try:
             bot.polling(none_stop=True, timeout=90)
+            backoff = 5  # сбрасываем при штатном выходе
         except Exception as e:
-            logger.error(f"Сбой polling, перезапуск через 5 сек: {e}")
-            import time; time.sleep(5)
+            logger.error(f"Сбой polling, перезапуск через {backoff} сек: {e}")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
 
 
 if __name__ == "__main__":

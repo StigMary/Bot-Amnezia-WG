@@ -27,7 +27,8 @@ _bind_pending: dict = {}
 from config import cfg, logger
 from database import (
     log_audit, get_audit_log, get_all_users, update_user_field,
-    delete_user, bind_tg_to_ip, get_user_by_ip, extend_paid_until
+    delete_user, bind_tg_to_ip, get_user_by_ip, extend_paid_until,
+    extend_paid_until_for_tg, get_devices_by_tg_id,
 )
 from vpn_engine import (
     get_vpn_stats, apply_limit, delete_peer,
@@ -293,13 +294,30 @@ def register(bot: telebot.TeleBot):
             if tid:
                 unique_tg_ids.add(tid)
 
+        import time as _time
         sent, failed = 0, 0
+        # Telegram bot API: ~30 msg/sec для разных чатов. Делаем паузу ~50мс между сообщениями.
         for tg_id in unique_tg_ids:
             try:
                 bot.send_message(tg_id, f"📢 {message.text}")
                 sent += 1
+            except telebot.apihelper.ApiTelegramException as e:
+                # Если упёрлись в лимит — Telegram возвращает retry_after.
+                retry_after = getattr(e, "result_json", {}).get("parameters", {}).get("retry_after")
+                if retry_after:
+                    logger.warning(f"Broadcast: flood limit, спим {retry_after} сек.")
+                    _time.sleep(int(retry_after) + 1)
+                    try:
+                        bot.send_message(tg_id, f"📢 {message.text}")
+                        sent += 1
+                        continue
+                    except Exception:
+                        failed += 1
+                else:
+                    failed += 1
             except Exception:
                 failed += 1
+            _time.sleep(0.05)
         log_audit("BROADCAST", details=f"sent={sent}, failed={failed}", admin_id=message.from_user.id)
         bot.reply_to(message, f"✅ Рассылка завершена: отправлено *{sent}*, ошибка *{failed}*.",
                      parse_mode="Markdown")
@@ -495,69 +513,81 @@ def register(bot: telebot.TeleBot):
     def cb_extend_confirm(call):
         _, ip, days_str = call.data.split("|")
 
+        # Определяем целевой набор IP: все устройства аккаунта (если привязан tg_user_id),
+        # иначе только этот IP.
+        user = get_user_by_ip(ip)
+        tg_user_id = user["tg_user_id"] if user else None
+
+        def _apply_to_account(field: str, value):
+            """Обновляет поле для всех устройств аккаунта или одного IP."""
+            if tg_user_id:
+                for d in get_devices_by_tg_id(tg_user_id):
+                    update_user_field(d["ip_address"], field, value)
+            else:
+                update_user_field(ip, field, value)
+
+        scope = f"tg_id={tg_user_id}" if tg_user_id else f"ip={ip}"
+
         if days_str == "set28":
             from datetime import datetime as _dt
             now = _dt.now()
-            # Устанавливаем 28-е число текущего месяца
             target_date = now.replace(day=28, hour=0, minute=0, second=0, microsecond=0)
             if target_date < now:
-                # Если уже прошло 28 число, ставим 28 следующего месяца
                 import calendar
                 days_in_month = calendar.monthrange(now.year, now.month)[1]
                 target_date = target_date + __import__("datetime").timedelta(days=days_in_month)
                 target_date = target_date.replace(day=28)
-                
+
             iso = target_date.strftime("%Y-%m-%dT%H:%M:%S")
-            update_user_field(ip, "paid_until", iso)
-            log_audit("EXTEND", target_ip=ip, details=f"set28 -> {iso}", admin_id=call.from_user.id)
+            _apply_to_account("paid_until", iso)
+            log_audit("EXTEND", target_ip=ip, details=f"set28 -> {iso} ({scope})", admin_id=call.from_user.id)
             bot.edit_message_text(
-                f"🗓 Дата оплаты установлена на **28 число** ({target_date.strftime('%d.%m.%Y')})!\nIP: `{ip}`",
+                f"🗓 Дата оплаты установлена на **28 число** ({target_date.strftime('%d.%m.%Y')})!\n{scope}",
                 call.message.chat.id, call.message.message_id, parse_mode="Markdown"
             )
             return
 
         if days_str == "reset":
-            update_user_field(ip, "paid_until", None)
-            log_audit("EXTEND", target_ip=ip, details="reset", admin_id=call.from_user.id)
+            _apply_to_account("paid_until", None)
+            log_audit("EXTEND", target_ip=ip, details=f"reset ({scope})", admin_id=call.from_user.id)
             bot.edit_message_text(
-                f"🗑 Дата оплаты сброшена (отменена)!\nIP: `{ip}`",
+                f"🗑 Дата оплаты сброшена (отменена)!\n{scope}",
                 call.message.chat.id, call.message.message_id, parse_mode="Markdown"
             )
             return
 
         if days_str == "lifetime":
-            from datetime import datetime as _dt
-            # Бессрочно = дата в далёком будущем
-            update_user_field(ip, "paid_until", "2099-12-31")
-            log_audit("EXTEND", target_ip=ip, details="lifetime", admin_id=call.from_user.id)
-            user = get_user_by_ip(ip)
-            if user and user["tg_user_id"]:
+            _apply_to_account("paid_until", "2099-12-31")
+            log_audit("EXTEND", target_ip=ip, details=f"lifetime ({scope})", admin_id=call.from_user.id)
+            if tg_user_id:
                 try:
                     bot.send_message(
-                        user["tg_user_id"],
+                        tg_user_id,
                         "♾️ *Бессрочный доступ!*\nВаш VPN активирован бессрочно.",
                         parse_mode="Markdown"
                     )
                 except Exception:
                     pass
             bot.edit_message_text(
-                f"✅ Бессрочный доступ установлен!\nIP: `{ip}`",
+                f"✅ Бессрочный доступ установлен!\n{scope}",
                 call.message.chat.id, call.message.message_id, parse_mode="Markdown"
             )
             return
 
         days = int(days_str)
-        new_date = extend_paid_until(ip, days)
+        # Если есть tg_user_id — продлеваем подписку всего аккаунта (все устройства).
+        if tg_user_id:
+            new_date = extend_paid_until_for_tg(tg_user_id, days)
+        else:
+            new_date = extend_paid_until(ip, days)
         from datetime import datetime as _dt
         exp = _dt.fromisoformat(new_date)
-        log_audit("EXTEND", target_ip=ip, details=f"days={days}", admin_id=call.from_user.id)
+        log_audit("EXTEND", target_ip=ip, details=f"days={days} ({scope})", admin_id=call.from_user.id)
 
-        # Уведомляем клиента, если привязан
-        user = get_user_by_ip(ip)
-        if user and user["tg_user_id"]:
+        if tg_user_id:
             try:
                 bot.send_message(
-                    user["tg_user_id"],
+                    tg_user_id,
                     f"🎉 *Оплата подтверждена!*\n\n"
                     f"VPN продлён до *{exp.strftime('%d.%m.%Y')}*.",
                     parse_mode="Markdown"
@@ -567,7 +597,7 @@ def register(bot: telebot.TeleBot):
 
         bot.edit_message_text(
             f"✅ Подписка продлена!\n"
-            f"IP: `{ip}`\n+{days} дней\n"
+            f"{scope}\n+{days} дней\n"
             f"📅 До: *{exp.strftime('%d.%m.%Y')}*",
             call.message.chat.id, call.message.message_id,
             parse_mode="Markdown"

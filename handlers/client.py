@@ -107,6 +107,15 @@ def _get_inline_menu():
 # ─── Активные тикеты поддержки {tg_id: True} ────────────────────────────────
 _active_tickets: dict = {}
 
+# ─── Пул клиентов, написавших /start, но ещё не привязанных ────────────────
+# {tg_id: {"name": ..., "username": ...}}
+_pending_pool: dict = {}
+
+
+def _device_name(ip: str) -> str:
+    """Краткое имя устройства по IP (используется при привязке)."""
+    return f"Конфигурация #{ip.split('.')[-1]}"
+
 # ─── Регистрация хэндлеров ────────────────────────────────────────────────────
 
 def register(bot: telebot.TeleBot):
@@ -394,69 +403,8 @@ def register(bot: telebot.TeleBot):
         except Exception as e:
             logger.warning(f"Не удалось уведомить клиента tg_id={tg_user_id}: {e}")
 
-    # ── Привязка (сторона администратора) ────────────────────────────────────
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("bind_pick|"))
-    @admin_only_callback
-    def cb_bind_pick(call):
-        ip = call.data.split("|")[1]
-        if not _pending_pool:
-            bot.answer_callback_query(
-                call.id,
-                "👥 Никто ещё не писал /start боту.\n"
-                "Попросите клиента написать /start — он появится здесь.",
-                show_alert=True,
-            )
-            return
-
-        bot.answer_callback_query(call.id)
-        markup = InlineKeyboardMarkup(row_width=1)
-        for tg_id, info in sorted(_pending_pool.items(), key=lambda x: x[1]["name"]):
-            label = f"{info['name'].strip() or '—'}  {info['username']}"
-            markup.add(InlineKeyboardButton(
-                f"👤 {label}",
-                callback_data=f"bind_confirm|{ip}|{tg_id}",
-            ))
-        markup.add(InlineKeyboardButton("❌ Отмена", callback_data="bind_pick_cancel"))
-
-        bot.edit_message_text(
-            f"🔗 Выберите клиента для `{_device_name(ip)}`:\n"
-            f"_(список тех, кто написал /start боту)_",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=markup,
-            parse_mode="Markdown",
-        )
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("bind_confirm|"))
-    @admin_only_callback
-    def cb_bind_confirm(call):
-        _, ip, tg_id_str = call.data.split("|")
-        tg_id = int(tg_id_str)
-
-        bind_tg_to_ip(ip, tg_id)
-        _pending_pool.pop(tg_id, None)
-        log_audit("BIND", target_ip=ip, details=f"tg_id={tg_id}", admin_id=call.from_user.id)
-
-        bot.edit_message_text(
-            f"✅ *Привязано!*\n{_device_name(ip)} → TG ID `{tg_id}`",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="Markdown",
-        )
-        try:
-            bot.send_message(
-                tg_id,
-                "🎉 *Готово!* Ваш VPN-профиль привязан.\n"
-                "Напишите /start чтобы увидеть статус подписки.",
-                parse_mode="Markdown",
-            )
-        except Exception as e:
-            logger.warning(f"Не удалось уведомить клиента tg_id={tg_id}: {e}")
-
-    @bot.callback_query_handler(func=lambda c: c.data == "bind_pick_cancel")
-    @admin_only_callback
-    def cb_bind_pick_cancel(call):
-        bot.edit_message_text("❌ Привязка отменена.", call.message.chat.id, call.message.message_id)
+    # Привязка к Telegram-аккаунту обрабатывается в handlers/admin.py
+    # через нативный KeyboardButtonRequestUser (Bot API 7.0+).
 
     # ── Запрос нового устройства ─────────────────────────────────────────────
     @bot.callback_query_handler(func=lambda c: c.data == "client_req_device")

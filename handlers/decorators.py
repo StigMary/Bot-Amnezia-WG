@@ -12,6 +12,10 @@ from config import cfg, logger
 
 _rate_limits: dict = defaultdict(float)
 
+# Кэш проверок участия в группе: {uid: (is_member, expires_ts)}
+_group_member_cache: dict = {}
+_GROUP_CACHE_TTL = 300  # 5 минут
+
 
 # ─── Admin ───────────────────────────────────────────────────────────────────
 
@@ -62,13 +66,22 @@ def group_member_only(bot: telebot.TeleBot):
             if uid == cfg.admin_id:
                 return func(message, *args, **kwargs)
 
-            is_member = False
-            try:
-                member = bot.get_chat_member(cfg.group_chat_id, uid)
-                if member.status in ("member", "administrator", "creator"):
-                    is_member = True
-            except Exception as e:
-                logger.warning(f"group_member_only: ошибка проверки uid={uid}: {e}")
+            now = time.time()
+            cached = _group_member_cache.get(uid)
+            if cached and cached[1] > now:
+                is_member = cached[0]
+            else:
+                is_member = False
+                try:
+                    member = bot.get_chat_member(cfg.group_chat_id, uid)
+                    if member.status in ("member", "administrator", "creator"):
+                        is_member = True
+                except Exception as e:
+                    logger.warning(f"group_member_only: ошибка проверки uid={uid}: {e}")
+                # Кэшируем только положительный результат надолго,
+                # отказ — на короткий промежуток (вдруг пользователь только-только вступил).
+                ttl = _GROUP_CACHE_TTL if is_member else 30
+                _group_member_cache[uid] = (is_member, now + ttl)
 
             if is_member:
                 return func(message, *args, **kwargs)
