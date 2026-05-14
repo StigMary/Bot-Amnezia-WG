@@ -1,0 +1,91 @@
+name: Deploy
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (tag/branch/SHA) для деплоя"
+        required: true
+        default: "main"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to S1 (production)
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://github.com/StigMary/Bot-Amnezia-WG
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Show release info
+        run: |
+          echo "Deploying ref: ${{ github.event.inputs.ref || github.ref_name }}"
+          git log -1 --pretty=format:'%h %s (%an, %ad)' --date=iso
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          timeout: 60s
+          command_timeout: 5m
+          script: |
+            set -euo pipefail
+            REF="${{ github.event.inputs.ref || github.ref_name }}"
+            APP_DIR="/home/vpnuser/vpn_bot"
+            VENV="$APP_DIR/.venv"
+
+            echo "==> Switching to $APP_DIR"
+            cd "$APP_DIR"
+
+            echo "==> Backup current commit"
+            PREV=$(git rev-parse HEAD)
+            echo "Previous: $PREV"
+
+            echo "==> Fetch & checkout $REF"
+            git fetch --all --tags --prune
+            git checkout --force "$REF"
+
+            echo "==> Update dependencies (venv)"
+            "$VENV/bin/pip" install --upgrade pip --quiet
+            "$VENV/bin/pip" install -r requirements.txt --quiet
+
+            echo "==> Syntax check"
+            "$VENV/bin/python" -m compileall -q .
+
+            echo "==> Restart service (требует sudoers NOPASSWD на systemctl restart vpn-bot.service)"
+            sudo systemctl restart vpn-bot.service
+
+            echo "==> Wait 5s and verify status"
+            sleep 5
+            if ! sudo systemctl is-active --quiet vpn-bot.service; then
+              echo "!! Service failed to start, rolling back to $PREV"
+              git checkout --force "$PREV"
+              "$VENV/bin/pip" install -r requirements.txt --quiet
+              sudo systemctl restart vpn-bot.service
+              exit 1
+            fi
+
+            echo "==> Deploy OK: $(git rev-parse --short HEAD)"
+            sudo systemctl status vpn-bot.service --no-pager -n 10 || true
+
+      - name: Notify failure
+        if: failure()
+        run: echo "::error::Deploy failed. Service was rolled back on the host (если успело)."
