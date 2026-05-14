@@ -1,0 +1,43 @@
+name: ✨ Feature request
+description: Предложить новую функциональность
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему решает фича?
+      placeholder: Сейчас приходится вручную делать ..., потому что ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Предлагаемое решение
+      description: Как это должно работать с точки зрения пользователя?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативные варианты
+      description: Какие альтернативы вы рассматривали?
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Приоритет (по вашей оценке)
+      options:
+        - Низкий (nice to have)
+        - Средний
+        - Высокий (блокирует работу)
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Дополнительный контекст
+      description: Скриншоты, ссылки, примеры из других ботов

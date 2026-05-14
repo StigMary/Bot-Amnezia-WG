@@ -1,0 +1,70 @@
+name: 🐛 Bug report
+description: Сообщить об ошибке в работе бота
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что нашли время сообщить о баге! Пожалуйста, заполните форму максимально подробно.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Описание проблемы
+      description: Что произошло? Что вы ожидали увидеть?
+      placeholder: Бот не отвечает на команду /start...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Как воспроизвести баг?
+      placeholder: |
+        1. Запустить `/start`
+        2. Нажать на кнопку «Профиль»
+        3. Увидеть ошибку
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи / скриншоты
+      description: Вывод `journalctl -u vpn-bot.service -n 100 --no-pager` или скриншоты
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия бота
+      placeholder: "v3.1.0 (или git commit hash)"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: ОС / окружение
+      placeholder: "Ubuntu 22.04, Python 3.11, AmneziaWG 1.0.x"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Чек-лист
+      options:
+        - label: Я проверил [open issues](https://github.com/StigMary/Bot-Amnezia-WG/issues) и убедился, что аналогичный баг ещё не зарепорчен.
+          required: true
+        - label: В логах/скриншотах нет токенов, приватных ключей и других секретов.
+          required: true

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Вопросы по использованию
+    url: https://github.com/StigMary/Bot-Amnezia-WG/discussions
+    about: Для общих вопросов используйте Discussions, а не Issues.
