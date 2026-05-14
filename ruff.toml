@@ -1,0 +1,31 @@
+# Ruff configuration
+# https://docs.astral.sh/ruff/
+
+target-version = "py310"
+line-length = 120
+extend-exclude = [
+    ".venv",
+    "venv",
+    "legacy",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[lint]
+# Стартовый минимальный набор — расширим постепенно.
+# E/W — pycodestyle, F — pyflakes, I — isort, UP — pyupgrade, B — bugbear.
+select = ["E", "W", "F", "I", "UP", "B"]
+ignore = [
+    "E501",   # длина строки (часто превышается в f-string c HTML/MD)
+    "B008",   # function call in default argument (часто в Telegram-хендлерах)
+    "UP038",  # X | Y вместо tuple в isinstance (несовместимо с py3.10)
+]
+
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]  # неиспользуемые импорты (реэкспорт)
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
