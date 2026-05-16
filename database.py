@@ -2,13 +2,13 @@
 database.py — Вся работа с SQLite.
 Инициализация таблиц, миграция схемы, CRUD-функции, аудит.
 """
-import sqlite3
+
 import contextlib
+import sqlite3
 from datetime import datetime
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Any
 
 from config import cfg, logger
-
 
 # ─── Контекстный менеджер соединения ─────────────────────────────────────────
 
@@ -44,6 +44,7 @@ def get_conn():
 
 
 # ─── Инициализация и миграция ─────────────────────────────────────────────────
+
 
 def init_db() -> None:
     """Создаёт таблицы и выполняет безопасную миграцию схемы."""
@@ -97,42 +98,42 @@ def _migrate() -> None:
     ]
     with get_conn() as conn:
         for sql in migrations:
-            with contextlib.suppress(Exception):   # колонка уже существует — OK
+            with contextlib.suppress(Exception):  # колонка уже существует — OK
                 conn.execute(sql)
     logger.info("Миграция схемы БД выполнена.")
 
 
 # ─── Аудит ───────────────────────────────────────────────────────────────────
 
+
 def log_audit(
     action: str,
-    target_ip: Optional[str] = None,
-    details: Optional[str] = None,
-    admin_id: Optional[int] = None,
+    target_ip: str | None = None,
+    details: str | None = None,
+    admin_id: int | None = None,
 ) -> None:
     try:
         with get_conn() as conn:
             conn.execute(
-                "INSERT INTO audit_log (timestamp, action, target_ip, details, admin_id) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO audit_log (timestamp, action, target_ip, details, admin_id) VALUES (?, ?, ?, ?, ?)",
                 (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), action, target_ip, details, admin_id),
             )
     except Exception as e:
         logger.error(f"Ошибка записи в audit_log: {e}")
 
 
-def get_audit_log(limit: int = 15) -> List[sqlite3.Row]:
+def get_audit_log(limit: int = 15) -> list[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute(
-            "SELECT timestamp, action, target_ip, details FROM audit_log "
-            "ORDER BY id DESC LIMIT ?",
+            "SELECT timestamp, action, target_ip, details FROM audit_log ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
 
 
 # ─── Пользователи: чтение ────────────────────────────────────────────────────
 
-def get_all_users() -> Dict[str, Dict[str, Any]]:
+
+def get_all_users() -> dict[str, dict[str, Any]]:
     """Возвращает всех пользователей: {ip: {alias, speed_limit, protocol, tg_user_id, paid_until}}."""
     with get_conn() as conn:
         rows = conn.execute(
@@ -140,33 +141,29 @@ def get_all_users() -> Dict[str, Dict[str, Any]]:
         ).fetchall()
     return {
         r["ip_address"]: {
-            "alias":       r["alias"],
+            "alias": r["alias"],
             "speed_limit": r["speed_limit"],
-            "protocol":    r["protocol"],
-            "tg_user_id":  r["tg_user_id"],
-            "paid_until":  r["paid_until"],
-            "client_alias":r["client_alias"],
+            "protocol": r["protocol"],
+            "tg_user_id": r["tg_user_id"],
+            "paid_until": r["paid_until"],
+            "client_alias": r["client_alias"],
         }
         for r in rows
     }
 
 
-def get_user_by_tg_id(tg_user_id: int) -> Optional[sqlite3.Row]:
+def get_user_by_tg_id(tg_user_id: int) -> sqlite3.Row | None:
     """Ищет профиль пользователя по его Telegram ID."""
     with get_conn() as conn:
-        return conn.execute(
-            "SELECT * FROM users WHERE tg_user_id = ?", (tg_user_id,)
-        ).fetchone()
+        return conn.execute("SELECT * FROM users WHERE tg_user_id = ?", (tg_user_id,)).fetchone()
 
 
-def get_user_by_ip(ip: str) -> Optional[sqlite3.Row]:
+def get_user_by_ip(ip: str) -> sqlite3.Row | None:
     with get_conn() as conn:
-        return conn.execute(
-            "SELECT * FROM users WHERE ip_address = ?", (ip,)
-        ).fetchone()
+        return conn.execute("SELECT * FROM users WHERE ip_address = ?", (ip,)).fetchone()
 
 
-def get_billing_users() -> List[sqlite3.Row]:
+def get_billing_users() -> list[sqlite3.Row]:
     """Все пользователи с привязанным TG ID и датой оплаты (для check_billing)."""
     with get_conn() as conn:
         return conn.execute(
@@ -191,19 +188,17 @@ def update_user_field(ip: str, field: str, value: Any) -> bool:
         return False
     with get_conn() as conn:
         conn.execute(
-            f"INSERT INTO users (ip_address, {field}) VALUES (?, ?) "
+            f"INSERT INTO users (ip_address, {field}) VALUES (?, ?) "  # nosec B608
             f"ON CONFLICT(ip_address) DO UPDATE SET {field} = excluded.{field}",
             (ip, value),
         )
     return True
 
 
-def upsert_users_batch(pairs: List[Tuple[str, str]]) -> None:
+def upsert_users_batch(pairs: list[tuple[str, str]]) -> None:
     """Массовое добавление пользователей (ip, protocol) без затирания существующих."""
     with get_conn() as conn:
-        conn.executemany(
-            "INSERT OR IGNORE INTO users (ip_address, protocol) VALUES (?, ?)", pairs
-        )
+        conn.executemany("INSERT OR IGNORE INTO users (ip_address, protocol) VALUES (?, ?)", pairs)
 
 
 def delete_user(ip: str) -> None:
@@ -223,6 +218,7 @@ def extend_paid_until(ip: str, days: int) -> str:
     Возвращает новую дату в виде строки ISO.
     """
     from datetime import timedelta
+
     user = get_user_by_ip(ip)
     if user and user["paid_until"]:
         try:
@@ -230,9 +226,8 @@ def extend_paid_until(ip: str, days: int) -> str:
             # Если была бессрочная подписка, сбрасываем базу на сегодня
             if base.year >= 2099:
                 base = datetime.now()
-                
-            new_date = base + timedelta(days=days) if base > datetime.now() \
-                       else datetime.now() + timedelta(days=days)
+
+            new_date = base + timedelta(days=days) if base > datetime.now() else datetime.now() + timedelta(days=days)
         except ValueError:
             new_date = datetime.now() + timedelta(days=days)
     else:
@@ -245,12 +240,12 @@ def extend_paid_until(ip: str, days: int) -> str:
 
 # ─── Многоустройственные операции (по tg_user_id) ────────────────────────────
 
-def get_devices_by_tg_id(tg_user_id: int) -> List[sqlite3.Row]:
+
+def get_devices_by_tg_id(tg_user_id: int) -> list[sqlite3.Row]:
     """Возвращает все VPN-профили (устройства) одного аккаунта."""
     with get_conn() as conn:
         return conn.execute(
-            "SELECT ip_address, alias, speed_limit, protocol, paid_until, client_alias "
-            "FROM users WHERE tg_user_id = ?",
+            "SELECT ip_address, alias, speed_limit, protocol, paid_until, client_alias FROM users WHERE tg_user_id = ?",
             (tg_user_id,),
         ).fetchall()
 
@@ -261,6 +256,7 @@ def extend_paid_until_for_tg(tg_user_id: int, days: int) -> str:
     Возвращает новую дату ISO.
     """
     from datetime import timedelta
+
     devices = get_devices_by_tg_id(tg_user_id)
     if not devices:
         raise ValueError(f"Нет устройств для tg_user_id={tg_user_id}")
@@ -282,8 +278,7 @@ def extend_paid_until_for_tg(tg_user_id: int, days: int) -> str:
     if best_base.year >= 2099:
         best_base = datetime.now()
 
-    new_date = best_base + timedelta(days=days) if best_base > datetime.now() \
-               else datetime.now() + timedelta(days=days)
+    new_date = best_base + timedelta(days=days) if best_base > datetime.now() else datetime.now() + timedelta(days=days)
     iso = new_date.strftime("%Y-%m-%dT%H:%M:%S")
 
     with get_conn() as conn:
@@ -294,7 +289,7 @@ def extend_paid_until_for_tg(tg_user_id: int, days: int) -> str:
     return iso
 
 
-def get_billing_accounts() -> List[Dict[str, Any]]:
+def get_billing_accounts() -> list[dict[str, Any]]:
     """
     Возвращает список уникальных аккаунтов для биллинга.
     Группирует устройства по tg_user_id и берёт единую paid_until.

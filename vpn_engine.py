@@ -2,23 +2,22 @@
 vpn_engine.py — Взаимодействие с серверами.
 SSH/Docker-транспорт, парсинг WireGuard, QoS (tc/htb), валидация.
 """
-import subprocess
+
 import ipaddress
-import re
-import tempfile
 import os
-import csv
-import time
+import re
+import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Any
 
 from config import cfg, logger
 from database import get_all_users, upsert_users_batch
 
-
 # ─── Валидация ────────────────────────────────────────────────────────────────
+
 
 def validate_vpn_ip(ip_str: str) -> bool:
     """Проверяет, что IP валиден и принадлежит VPN-подсети."""
@@ -31,38 +30,46 @@ def validate_vpn_ip(ip_str: str) -> bool:
 def sanitize_alias(text: str) -> str:
     """Ограничивает длину и удаляет Markdown-спецсимволы."""
     text = text.strip()[:30]
-    text = re.sub(r'[*_`\[\]()~>#+-=|{}.!\\]', "", text)
+    text = re.sub(r"[*_`\[\]()~>#+-=|{}.!\\]", "", text)
     return text or "Без имени"
 
 
 # ─── SSH: ControlMaster для переиспользования подключений ─────────────────────
-_SSH_CONTROL_DIR = "/tmp/ssh_ctl"
+_SSH_CONTROL_DIR = "/tmp/ssh_ctl"  # nosec B108
 os.makedirs(_SSH_CONTROL_DIR, exist_ok=True)
 
 _SSH_BASE_OPTS = [
-    "-o", "StrictHostKeyChecking=yes",
-    "-o", "UserKnownHostsFile=/home/vpnuser/.ssh/known_hosts",
-    "-o", "ControlMaster=auto",
-    "-o", f"ControlPath={_SSH_CONTROL_DIR}/%h_%p_%r",
-    "-o", "ControlPersist=120",
-    "-o", "ConnectTimeout=8",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    "UserKnownHostsFile=/home/vpnuser/.ssh/known_hosts",
+    "-o",
+    "ControlMaster=auto",
+    "-o",
+    f"ControlPath={_SSH_CONTROL_DIR}/%h_%p_%r",
+    "-o",
+    "ControlPersist=120",
+    "-o",
+    "ConnectTimeout=8",
 ]
 
 
 def run_vpn_cmd(
-    target: Dict[str, Any],
-    cmd_list: List[str],
+    target: dict[str, Any],
+    cmd_list: list[str],
     capture: bool = True,
     timeout: int = 15,
-) -> Optional[subprocess.CompletedProcess]:
+) -> subprocess.CompletedProcess | None:
     """Выполняет команду на локальном (docker exec) или удалённом (ssh) сервере."""
     if target["host"] == "local":
         final_cmd = ["docker", "exec", target["name"]] + cmd_list
     else:
         final_cmd = (
-            ["ssh"] + _SSH_BASE_OPTS +
-            ["-p", str(target["port"]), target["host"]] +
-            ["sudo", "docker", "exec", target["name"]] + cmd_list
+            ["ssh"]
+            + _SSH_BASE_OPTS
+            + ["-p", str(target["port"]), target["host"]]
+            + ["sudo", "docker", "exec", target["name"]]
+            + cmd_list
         )
 
     try:
@@ -83,7 +90,7 @@ def run_ssh_cmd(
     port: str,
     remote_cmd: str,
     timeout: int = 15,
-) -> Optional[str]:
+) -> str | None:
     """Выполняет произвольную команду на удалённом сервере по SSH."""
     cmd = ["ssh"] + _SSH_BASE_OPTS + ["-p", str(port), host, remote_cmd]
     try:
@@ -98,6 +105,7 @@ def run_ssh_cmd(
 
 
 # ─── WireGuard / парсинг ─────────────────────────────────────────────────────
+
 
 def format_bytes(size: float) -> str:
     for unit in ["Б", "КБ", "МБ", "ГБ", "ТБ"]:
@@ -119,23 +127,23 @@ def get_online_emoji(handshake_ts: int) -> str:
 
 
 # ─── Кэш статистики ─────────────────────────────────────────────────────────────────
-_stats_cache: List[Dict] = []
+_stats_cache: list[dict] = []
 _stats_cache_ts: float = 0.0
-_stats_cache_ttl: float = 30.0   # кэш на 30 секунд
+_stats_cache_ttl: float = 30.0  # кэш на 30 секунд
 _stats_lock = threading.Lock()
 
 
-def _wg_cmd(cont: Dict) -> str:
+def _wg_cmd(cont: dict) -> str:
     """Имя бинарника WG: 'awg' (AmneziaWG) или 'wg'. Конфигурируется через cont['wg_cmd']."""
     return cont.get("wg_cmd", "awg")
 
 
-def _wg_iface(cont: Dict) -> str:
+def _wg_iface(cont: dict) -> str:
     """Имя WG-интерфейса в контейнере. Конфигурируется через cont['wg_iface']."""
     return cont.get("wg_iface", "awg0")
 
 
-def _poll_container(cont: Dict, db_users: Dict) -> tuple:
+def _poll_container(cont: dict, db_users: dict) -> tuple:
     """Опрашивает один контейнер. Возвращает (entries, new_users)."""
     entries, new_users = [], []
     res = run_vpn_cmd(cont, [_wg_cmd(cont), "show", "all", "dump"])
@@ -154,22 +162,24 @@ def _poll_container(cont: Dict, db_users: Dict) -> tuple:
         if not user_data:
             new_users.append((ip, cont["alias"]))
             user_data = {"alias": "Новый пользователь", "speed_limit": "max"}
-        entries.append({
-            "ip":           ip,
-            "server_alias": cont["alias"],
-            "db_alias":     user_data["alias"],
-            "speed_limit":  user_data["speed_limit"],
-            "last_seen":    "Никогда" if handshake == 0 else datetime.fromtimestamp(handshake).strftime("%d.%m %H:%M"),
-            "online_emoji": get_online_emoji(handshake),
-            "downloaded":   format_bytes(tx),
-            "uploaded":     format_bytes(rx),
-            "total_bytes":  rx + tx,
-            "handshake_ts": handshake,
-        })
+        entries.append(
+            {
+                "ip": ip,
+                "server_alias": cont["alias"],
+                "db_alias": user_data["alias"],
+                "speed_limit": user_data["speed_limit"],
+                "last_seen": "Никогда" if handshake == 0 else datetime.fromtimestamp(handshake).strftime("%d.%m %H:%M"),
+                "online_emoji": get_online_emoji(handshake),
+                "downloaded": format_bytes(tx),
+                "uploaded": format_bytes(rx),
+                "total_bytes": rx + tx,
+                "handshake_ts": handshake,
+            }
+        )
     return entries, new_users
 
 
-def get_vpn_stats(force: bool = False) -> List[Dict[str, Any]]:
+def get_vpn_stats(force: bool = False) -> list[dict[str, Any]]:
     """Собирает статистику VPN параллельно и кеширует на 30 сек."""
     global _stats_cache, _stats_cache_ts
 
@@ -178,8 +188,8 @@ def get_vpn_stats(force: bool = False) -> List[Dict[str, Any]]:
             return _stats_cache
 
     db_users = get_all_users()
-    stats: List[Dict] = []
-    new_users: List[tuple] = []
+    stats: list[dict] = []
+    new_users: list[tuple] = []
 
     # Параллельный опрос всех контейнеров
     with ThreadPoolExecutor(max_workers=len(cfg.vpn_containers)) as pool:
@@ -203,6 +213,7 @@ def get_vpn_stats(force: bool = False) -> List[Dict[str, Any]]:
 
 
 # ─── QoS (tc/htb) ────────────────────────────────────────────────────────────
+
 
 def get_class_id(ip_str: str) -> str:
     """Генерирует tc class-id из IPv4-адреса. FIX: защита от IPv6."""
@@ -289,7 +300,8 @@ def delete_peer(ip: str, server_alias: str) -> None:
 
 # ─── Мониторинг (метрики, графики, пинг) ─────────────────────────────────────
 
-def get_rf_metrics() -> Optional[Dict[str, Any]]:
+
+def get_rf_metrics() -> dict[str, Any] | None:
     """CPU, RAM, Uptime и счётчики сети с RF-сервера."""
     rf = next((c for c in cfg.vpn_containers if "RF" in c["alias"]), None)
     if not rf or rf["host"] == "local":
@@ -311,9 +323,9 @@ def get_rf_metrics() -> Optional[Dict[str, Any]]:
         return None
 
     return {
-        "cpu":      float(data[0]),
-        "ram":      float(data[1]),
-        "uptime":   str(timedelta(seconds=float(data[2]))).split(".")[0],
+        "cpu": float(data[0]),
+        "ram": float(data[1]),
+        "uptime": str(timedelta(seconds=float(data[2]))).split(".")[0],
         "net_recv": int(data[3]),
         "net_sent": int(data[4]),
     }
@@ -328,7 +340,7 @@ def get_rf_ping() -> list:
     remote_cmd = (
         "for host in 8.8.8.8 1.1.1.1 77.88.8.8 telegram.org instagram.com; do "
         "val=$(ping -c 3 -W 2 -q $host | awk -F'/' 'END{print $5}'); "
-        "if [ -z \"$val\" ]; then echo \"timeout\"; else echo \"$val\"; fi; "
+        'if [ -z "$val" ]; then echo "timeout"; else echo "$val"; fi; '
         "done"
     )
     output = run_ssh_cmd(rf["host"], rf["port"], remote_cmd, timeout=25)

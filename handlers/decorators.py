@@ -2,9 +2,10 @@
 handlers/decorators.py — Декораторы безопасности.
 admin_only, admin_only_callback, group_member_only, rate_limit.
 """
+
 import time
-from functools import wraps
 from collections import defaultdict
+from functools import wraps
 
 import telebot
 
@@ -19,18 +20,22 @@ _GROUP_CACHE_TTL = 300  # 5 минут
 
 # ─── Admin ───────────────────────────────────────────────────────────────────
 
+
 def admin_only(func):
     """Пропускает обработчик только для ADMIN_ID (message)."""
+
     @wraps(func)
     def wrapper(message: telebot.types.Message, *args, **kwargs):
         if message.from_user.id != cfg.admin_id:
             return
         return func(message, *args, **kwargs)
+
     return wrapper
 
 
 def admin_only_callback(func):
     """Пропускает callback только для ADMIN_ID."""
+
     @wraps(func)
     def wrapper(call: telebot.types.CallbackQuery, *args, **kwargs):
         if call.from_user.id != cfg.admin_id:
@@ -41,10 +46,12 @@ def admin_only_callback(func):
                 pass
             return
         return func(call, *args, **kwargs)
+
     return wrapper
 
 
 # ─── Group member ─────────────────────────────────────────────────────────────
+
 
 def group_member_only(bot: telebot.TeleBot):
     """
@@ -53,6 +60,7 @@ def group_member_only(bot: telebot.TeleBot):
         @group_member_only(bot)
         def handler(message): ...
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(message: telebot.types.Message, *args, **kwargs):
@@ -92,13 +100,16 @@ def group_member_only(bot: telebot.TeleBot):
                 )
 
         return wrapper
+
     return decorator
 
 
 # ─── Rate limit ──────────────────────────────────────────────────────────────
 
+
 def rate_limit(seconds: int = 3):
     """Ограничивает частоту вызовов для каждого пользователя."""
+
     def decorator(func):
         @wraps(func)
         def wrapper(message_or_call, *args, **kwargs):
@@ -109,5 +120,7 @@ def rate_limit(seconds: int = 3):
                 return
             _rate_limits[key] = now
             return func(message_or_call, *args, **kwargs)
+
         return wrapper
+
     return decorator

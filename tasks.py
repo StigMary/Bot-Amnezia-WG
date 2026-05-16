@@ -2,19 +2,21 @@
 tasks.py — Фоновый планировщик.
 Сбор метрик, авто-бэкап, биллинг, утренний дайджест, виджет мониторинга.
 """
-import os
-import csv
-import time
-import json
-import threading
+
 import contextlib
-import schedule
-import psutil
-from datetime import datetime, timedelta
+import csv
+import json
+import os
+import threading
+import time
+from datetime import datetime
 from typing import TYPE_CHECKING
 
+import psutil
+import schedule
+
 from config import cfg, logger
-from database import log_audit, get_billing_users, get_all_users, update_user_field
+from database import get_all_users, log_audit, update_user_field
 from vpn_engine import apply_limit
 
 if TYPE_CHECKING:
@@ -62,11 +64,12 @@ def collect_metrics(bot: "telebot.TeleBot") -> None:
 
 # ─── Авто-бэкап ──────────────────────────────────────────────────────────────
 
+
 def auto_backup(bot: "telebot.TeleBot") -> None:
     try:
         bot.send_message(cfg.admin_id, "🕐 *Автоматический бэкап (ежедневный)*", parse_mode="Markdown")
         for path, caption in [
-            (cfg.db_file,      "🗄 База данных"),
+            (cfg.db_file, "🗄 База данных"),
             (cfg.metrics_file, "📈 Метрики (CSV)"),
         ]:
             if os.path.exists(path):
@@ -79,6 +82,7 @@ def auto_backup(bot: "telebot.TeleBot") -> None:
 
 
 # ─── Утренний дайджест ────────────────────────────────────────────────────────
+
 
 def morning_digest(bot: "telebot.TeleBot") -> None:
     """09:00 — отчёт только если есть проблемы."""
@@ -130,13 +134,13 @@ def morning_digest(bot: "telebot.TeleBot") -> None:
 _WIDGET_FILE = "/home/vpnuser/vpn_bot/data/widget.json"
 
 # Трекеры скорости SE (локальный)
-_last_net_io   = None
+_last_net_io = None
 _last_net_time = 0.0
 
 # Трекеры скорости RF (удалённый)
-_last_rf_recv  = 0
-_last_rf_sent  = 0
-_last_rf_time  = 0.0
+_last_rf_recv = 0
+_last_rf_sent = 0
+_last_rf_time = 0.0
 
 
 def widget_save(chat_id: int, msg_id: int) -> None:
@@ -174,11 +178,9 @@ def _get_widget_text() -> str:
     now = time.time()
 
     # ── SE (локальный) ──────────────────────────────────────────────────────
-    cpu_se  = psutil.cpu_percent(interval=None)
-    ram_se  = psutil.virtual_memory().percent
-    uptime_se = str(
-        datetime.now() - datetime.fromtimestamp(psutil.boot_time())
-    ).split(".")[0]
+    cpu_se = psutil.cpu_percent(interval=None)
+    ram_se = psutil.virtual_memory().percent
+    uptime_se = str(datetime.now() - datetime.fromtimestamp(psutil.boot_time())).split(".")[0]
 
     curr_net = psutil.net_io_counters()
     if _last_net_io is not None and (now - _last_net_time) > 0:
@@ -187,7 +189,7 @@ def _get_widget_text() -> str:
         ul_se = (curr_net.bytes_sent - _last_net_io.bytes_sent) / dt
     else:
         dl_se = ul_se = 0.0
-    _last_net_io   = curr_net
+    _last_net_io = curr_net
     _last_net_time = now
 
     # ── RF (удалённый) ──────────────────────────────────────────────────────
@@ -204,10 +206,10 @@ def _get_widget_text() -> str:
         _last_rf_time = now
 
         rf_status = "`Online`"
-        rf_cpu    = f"`{rf['cpu']:.1f}%`"
-        rf_ram    = f"`{rf['ram']:.1f}%`"
+        rf_cpu = f"`{rf['cpu']:.1f}%`"
+        rf_ram = f"`{rf['ram']:.1f}%`"
         rf_uptime = f"`{rf['uptime']}`"
-        rf_speed  = f"⬇️ `{_fmt_speed(dl_rf)}` | ⬆️ `{_fmt_speed(ul_rf)}`"
+        rf_speed = f"⬇️ `{_fmt_speed(dl_rf)}` | ⬆️ `{_fmt_speed(ul_rf)}`"
     else:
         rf_status = "`Offline`"
         rf_cpu = rf_ram = rf_uptime = "N/A"
@@ -244,14 +246,16 @@ def update_widget(bot: "telebot.TeleBot") -> None:
 
 # ─── Биллинг: ежедневная проверка ────────────────────────────────────────────
 
+
 def check_billing(bot: "telebot.TeleBot") -> None:
     logger.info("Запуск ежедневной проверки биллинга...")
     from database import get_billing_accounts, get_devices_by_tg_id
+
     now = datetime.now()
     accounts = get_billing_accounts()
 
     for account in accounts:
-        tg_id      = account["tg_user_id"]
+        tg_id = account["tg_user_id"]
         paid_until = account["paid_until"]
 
         if not tg_id or not paid_until:
@@ -266,7 +270,7 @@ def check_billing(bot: "telebot.TeleBot") -> None:
             continue
 
         days_left = (expire_dt - now).days
-        devices   = get_devices_by_tg_id(tg_id)
+        devices = get_devices_by_tg_id(tg_id)
 
         try:
             if days_left == cfg.billing_warn_days:
@@ -303,9 +307,9 @@ def check_billing(bot: "telebot.TeleBot") -> None:
                     log_audit("AUTO_PUNISH", details=f"tg_id={tg_id}, devices={punished}, paid_until={paid_until}")
                     bot.send_message(
                         tg_id,
-                        f"🛑 *Срок действия истёк.*\n\n"
-                        f"Скорость ограничена до *1 Кбит/с* на всех конфигурациях.\n"
-                        f"Чтобы восстановить доступ — оплатите и пришлите чек через 💳 *Оплатить / Продлить*.",
+                        "🛑 *Срок действия истёк.*\n\n"
+                        "Скорость ограничена до *1 Кбит/с* на всех конфигурациях.\n"
+                        "Чтобы восстановить доступ — оплатите и пришлите чек через 💳 *Оплатить / Продлить*.",
                         parse_mode="Markdown",
                     )
                     logger.info(f"Карцер применён: tg_id={tg_id}, устройств={punished}")
@@ -315,8 +319,8 @@ def check_billing(bot: "telebot.TeleBot") -> None:
     logger.info("Проверка биллинга завершена.")
 
 
-
 # ─── Запуск фонового планировщика ────────────────────────────────────────────
+
 
 def start_scheduler(bot: "telebot.TeleBot") -> None:
     """Запускает фоновый поток с планировщиком задач."""
