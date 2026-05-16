@@ -26,9 +26,6 @@ from telebot.types import (
     ReplyKeyboardRemove,
 )
 
-# {admin_id: ip} — пендинг привязки: какой IP ждёт контакт
-_bind_pending: dict = {}
-
 from config import cfg, logger
 from database import (
     bind_tg_to_ip,
@@ -52,6 +49,9 @@ from vpn_engine import (
     sanitize_alias,
     validate_vpn_ip,
 )
+
+# {admin_id: ip} — пендинг привязки: какой IP ждёт контакт
+_bind_pending: dict = {}
 
 
 # --- Markdown v1 escape helper (защита от Bad Request: can't parse entities) ---
@@ -843,7 +843,7 @@ def _send_users_page(bot, chat_id, page, message_id=None, flt="all"):
             try:
                 e = _dt2.fromisoformat(d)
                 return e.year < 2099 and (e - now2).days < 0
-            except:
+            except Exception:
                 return False
 
         users = [u for u in all_users if _chk(u)]
@@ -857,7 +857,7 @@ def _send_users_page(bot, chat_id, page, message_id=None, flt="all"):
                 e = _dt2.fromisoformat(d)
                 dl = (e - now2).days
                 return e.year < 2099 and 0 <= dl <= 7
-            except:
+            except Exception:
                 return False
 
         users = [u for u in all_users if _chk(u)]
