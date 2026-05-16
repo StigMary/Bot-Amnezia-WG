@@ -1,10 +1,11 @@
 """
-tasks.py — Фоновый планировщик.
-Сбор метрик, авто-бэкап, ежедневная проверка биллинга, утренний дайджест.
+handlers/tasks.py — Фоновый планировщик.
+Сбор метрик, авто-бэкап, биллинг, утренний дайджест, виджет мониторинга.
 """
 import os
 import csv
 import time
+import json
 import threading
 import contextlib
 import schedule
@@ -35,6 +36,7 @@ def collect_metrics(bot: "telebot.TeleBot") -> None:
         total_mb = (net.bytes_sent + net.bytes_recv) / 1024 / 1024
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+        os.makedirs(os.path.dirname(cfg.metrics_file), exist_ok=True)
         file_exists = os.path.isfile(cfg.metrics_file)
         with open(cfg.metrics_file, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -138,6 +140,126 @@ def morning_digest(bot: "telebot.TeleBot") -> None:
         logger.error(f"Ошибка утреннего дайджеста: {e}")
 
 
+# ─── Виджет мониторинга ───────────────────────────────────────────────────────
+
+_WIDGET_FILE = os.path.join(
+    os.path.dirname(cfg.db_file), "widget.json"
+)
+
+# Трекеры скорости SE (локальный)
+_last_net_io   = None
+_last_net_time = 0.0
+
+# Трекеры скорости RF (удалённый)
+_last_rf_recv  = 0
+_last_rf_sent  = 0
+_last_rf_time  = 0.0
+
+
+def widget_save(chat_id: int, msg_id: int) -> None:
+    """Сохраняет chat_id и msg_id виджета на диск (переживает рестарт)."""
+    with contextlib.suppress(Exception):
+        os.makedirs(os.path.dirname(_WIDGET_FILE), exist_ok=True)
+        with open(_WIDGET_FILE, "w") as _f:
+            json.dump({"chat_id": chat_id, "msg_id": msg_id}, _f)
+
+
+def widget_load():
+    """Загружает сохранённые параметры виджета."""
+    try:
+        with open(_WIDGET_FILE) as _f:
+            d = json.load(_f)
+            return d["chat_id"], d["msg_id"]
+    except Exception:
+        return None, None
+
+
+def _fmt_speed(bytes_per_sec: float) -> str:
+    """Форматирует скорость в bps / Kbps / Mbps / Gbps."""
+    bits = bytes_per_sec * 8
+    for unit in ["bps", "Kbps", "Mbps", "Gbps"]:
+        if bits < 1024:
+            return f"{bits:.1f} {unit}"
+        bits /= 1024
+    return f"{bits:.1f} Tbps"
+
+
+def _get_widget_text() -> str:
+    """Собирает текст виджета с реальными скоростями SE и RF."""
+    global _last_net_io, _last_net_time, _last_rf_recv, _last_rf_sent, _last_rf_time
+    from vpn_engine import get_rf_metrics
+
+    now = time.time()
+
+    # ── SE (локальный) ──────────────────────────────────────────────────────
+    cpu_se  = psutil.cpu_percent(interval=None)
+    ram_se  = psutil.virtual_memory().percent
+    uptime_se = str(
+        datetime.now() - datetime.fromtimestamp(psutil.boot_time())
+    ).split(".")[0]
+
+    curr_net = psutil.net_io_counters()
+    if _last_net_io is not None and (now - _last_net_time) > 0:
+        dt = now - _last_net_time
+        dl_se = (curr_net.bytes_recv - _last_net_io.bytes_recv) / dt
+        ul_se = (curr_net.bytes_sent - _last_net_io.bytes_sent) / dt
+    else:
+        dl_se = ul_se = 0.0
+    _last_net_io   = curr_net
+    _last_net_time = now
+
+    # ── RF (удалённый) ──────────────────────────────────────────────────────
+    rf = get_rf_metrics()
+    if rf:
+        if _last_rf_recv > 0 and (now - _last_rf_time) > 0:
+            dt_rf = now - _last_rf_time
+            dl_rf = (rf["net_recv"] - _last_rf_recv) / dt_rf
+            ul_rf = (rf["net_sent"] - _last_rf_sent) / dt_rf
+        else:
+            dl_rf = ul_rf = 0.0
+        _last_rf_recv = rf["net_recv"]
+        _last_rf_sent = rf["net_sent"]
+        _last_rf_time = now
+
+        rf_status = "`Online`"
+        rf_cpu    = f"`{rf['cpu']:.1f}%`"
+        rf_ram    = f"`{rf['ram']:.1f}%`"
+        rf_uptime = f"`{rf['uptime']}`"
+        rf_speed  = f"⬇️ `{_fmt_speed(dl_rf)}` | ⬆️ `{_fmt_speed(ul_rf)}`"
+    else:
+        rf_status = "`Offline`"
+        rf_cpu = rf_ram = rf_uptime = "N/A"
+        rf_speed = "❌ Данные недоступны"
+
+    return (
+        "📊 *KJZNNETx | Глобальный мониторинг*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🇸🇪 *Швеция (Main Node):*\n"
+        f"🖥 CPU: `{cpu_se}%` | 💾 RAM: `{ram_se}%` | ⏱ `{uptime_se}`\n"
+        f"⬇️ `{_fmt_speed(dl_se)}` | ⬆️ `{_fmt_speed(ul_se)}`\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🇷🇺 *Россия (RF Node):*\n"
+        f"🚀 Status: {rf_status}\n"
+        f"🖥 CPU: {rf_cpu} | 💾 RAM: {rf_ram} | ⏱ {rf_uptime}\n"
+        f"{rf_speed}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔄 _Update:_ `{datetime.now().strftime('%H:%M:%S')}`"
+    )
+
+
+def update_widget(bot: "telebot.TeleBot") -> None:
+    """Обновляет закреплённый виджет каждые 30 сек."""
+    chat_id, msg_id = widget_load()
+    if not chat_id or not msg_id:
+        return
+    try:
+        text = _get_widget_text()
+        with contextlib.suppress(Exception):
+            bot.edit_message_text(text, chat_id, msg_id, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Ошибка обновления виджета: {e}")
+
+
 # ─── Биллинг: ежедневная проверка ────────────────────────────────────────────
 
 def check_billing(bot: "telebot.TeleBot") -> None:
@@ -153,11 +275,11 @@ def check_billing(bot: "telebot.TeleBot") -> None:
     users = get_billing_users()
 
     for user in users:
-        ip           = user["ip_address"]
-        tg_id        = user["tg_user_id"]
-        paid_until   = user["paid_until"]
-        speed_limit  = user["speed_limit"]
-        protocol     = user["protocol"]
+        ip          = user["ip_address"]
+        tg_id       = user["tg_user_id"]
+        paid_until  = user["paid_until"]
+        speed_limit = user["speed_limit"]
+        protocol    = user["protocol"]
 
         if not tg_id or not paid_until:
             continue
@@ -172,8 +294,7 @@ def check_billing(bot: "telebot.TeleBot") -> None:
         if expire_dt.year >= 2099:
             continue
 
-        delta = expire_dt - now
-        days_left = delta.days
+        days_left = (expire_dt - now).days
 
         try:
             if days_left == cfg.billing_warn_days:
@@ -225,183 +346,7 @@ def start_scheduler(bot: "telebot.TeleBot") -> None:
     schedule.every().day.at(cfg.backup_time).do(auto_backup, bot)
     schedule.every().day.at(cfg.billing_check_time).do(check_billing, bot)
     schedule.every().day.at("09:00").do(morning_digest, bot)
-
-    def _run():
-        while True:
-            try:
-                schedule.run_pending()
-                time.sleep(1)
-            except Exception as e:
-                logger.error(f"Ошибка в планировщике: {e}")
-                time.sleep(5)
-
-    thread = threading.Thread(target=_run, daemon=True, name="scheduler")
-    thread.start()
-    logger.info("Фоновый планировщик запущен.")
-
-import os
-import csv
-import time
-import threading
-import contextlib
-import schedule
-import psutil
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
-
-from config import cfg, logger
-from database import log_audit, get_billing_users, update_user_field
-from vpn_engine import apply_limit
-
-if TYPE_CHECKING:
-    import telebot
-
-
-# ─── Сбор метрик ─────────────────────────────────────────────────────────────
-
-_last_anomaly_alert: float = 0.0
-
-
-def collect_metrics(bot: "telebot.TeleBot") -> None:
-    """Записывает CPU/RAM/Traffic в CSV и проверяет аномалии."""
-    global _last_anomaly_alert
-    try:
-        cpu = psutil.cpu_percent(interval=1)
-        ram = psutil.virtual_memory().percent
-        net = psutil.net_io_counters()
-        total_mb = (net.bytes_sent + net.bytes_recv) / 1024 / 1024
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-        file_exists = os.path.isfile(cfg.metrics_file)
-        with open(cfg.metrics_file, "a", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            if not file_exists:
-                w.writerow(["Timestamp", "CPU", "RAM", "Traffic_MB"])
-            w.writerow([ts, cpu, ram, round(total_mb, 2)])
-
-        # Проверка аномалий (не чаще 1 раза в 10 мин)
-        now = time.time()
-        if now - _last_anomaly_alert >= 600:
-            alerts = []
-            if cpu > cfg.anomaly_cpu_threshold:
-                alerts.append(f"🔥 CPU: {cpu}% (порог: {cfg.anomaly_cpu_threshold}%)")
-            if ram > cfg.anomaly_ram_threshold:
-                alerts.append(f"💾 RAM: {ram}% (порог: {cfg.anomaly_ram_threshold}%)")
-            if alerts:
-                _last_anomaly_alert = now
-                msg = "🚨 *АНОМАЛИЯ НА SE СЕРВЕРЕ!*\n\n" + "\n".join(alerts)
-                with contextlib.suppress(Exception):
-                    bot.send_message(cfg.admin_id, msg, parse_mode="Markdown")
-
-    except Exception as e:
-        logger.error(f"Ошибка сбора метрик: {e}")
-
-
-# ─── Авто-бэкап ──────────────────────────────────────────────────────────────
-
-def auto_backup(bot: "telebot.TeleBot") -> None:
-    """Отправляет ежедневный бэкап БД и метрик админу."""
-    try:
-        bot.send_message(cfg.admin_id, "🕐 *Автоматический бэкап (ежедневный)*", parse_mode="Markdown")
-        for path, caption in [
-            (cfg.db_file,      "🗄 База данных"),
-            (cfg.metrics_file, "📈 Метрики (CSV)"),
-        ]:
-            if os.path.exists(path):
-                with open(path, "rb") as f:
-                    bot.send_document(cfg.admin_id, f, caption=caption)
-        log_audit("AUTO_BACKUP")
-        logger.info("Авто-бэкап успешно отправлен.")
-    except Exception as e:
-        logger.error(f"Ошибка авто-бэкапа: {e}")
-
-
-# ─── Биллинг: ежедневная проверка ────────────────────────────────────────────
-
-def check_billing(bot: "telebot.TeleBot") -> None:
-    """
-    Ежедневный воркер (запускается в cfg.billing_check_time).
-    Логика:
-      • осталось cfg.billing_warn_days дней  → напоминание
-      • осталось cfg.billing_critical_days д → «завтра последний день»
-      • просрочено                           → карцер + уведомление
-    """
-    logger.info("Запуск ежедневной проверки биллинга...")
-    now = datetime.now()
-    users = get_billing_users()
-
-    for user in users:
-        ip           = user["ip_address"]
-        tg_id        = user["tg_user_id"]
-        paid_until   = user["paid_until"]
-        speed_limit  = user["speed_limit"]
-        protocol     = user["protocol"]
-
-        if not tg_id or not paid_until:
-            continue
-
-        try:
-            expire_dt = datetime.fromisoformat(paid_until)
-        except ValueError:
-            logger.warning(f"check_billing: невалидная дата для {ip}: '{paid_until}'")
-            continue
-
-        delta = expire_dt - now
-        days_left = delta.days
-
-        try:
-            # ── 3 дня до конца ──────────────────────────────────────────
-            if days_left == cfg.billing_warn_days:
-                bot.send_message(
-                    tg_id,
-                    f"⏳ *Внимание!* Через *{cfg.billing_warn_days} дня* заканчивается оплата VPN.\n\n"
-                    f"Оплачено до: `{expire_dt.strftime('%d.%m.%Y')}`\n"
-                    f"Нажмите /start → «💳 Оплатить/Продлить», чтобы не потерять доступ.",
-                    parse_mode="Markdown",
-                )
-                logger.info(f"Предупреждение -3 дня отправлено tg_id={tg_id} (ip={ip})")
-
-            # ── 1 день до конца ─────────────────────────────────────────
-            elif days_left == cfg.billing_critical_days:
-                bot.send_message(
-                    tg_id,
-                    f"🚨 *Завтра последний день!*\n\n"
-                    f"Оплачено до: `{expire_dt.strftime('%d.%m.%Y')}`\n"
-                    f"Пришлите чек об оплате через /start → «💳 Оплатить», чтобы не потерять скорость.",
-                    parse_mode="Markdown",
-                )
-                logger.info(f"Предупреждение -1 день отправлено tg_id={tg_id} (ip={ip})")
-
-            # ── Просрочено ───────────────────────────────────────────────
-            elif days_left < 0 and speed_limit != "punish":
-                if protocol:
-                    apply_limit(ip, "punish", protocol)
-                update_user_field(ip, "speed_limit", "punish")
-                log_audit("AUTO_PUNISH", target_ip=ip, details=f"paid_until={paid_until}")
-
-                bot.send_message(
-                    tg_id,
-                    f"🛑 *Срок действия истёк.*\n\n"
-                    f"Скорость ограничена до *1 Кбит/с*.\n"
-                    f"Оплатите тариф и пришлите чек через /start → «💳 Оплатить» "
-                    f"для автоматического восстановления скорости.",
-                    parse_mode="Markdown",
-                )
-                logger.info(f"Карцер применён для ip={ip}, tg_id={tg_id}")
-
-        except Exception as e:
-            logger.error(f"check_billing: ошибка для ip={ip}, tg_id={tg_id}: {e}")
-
-    logger.info("Проверка биллинга завершена.")
-
-
-# ─── Запуск фонового планировщика ────────────────────────────────────────────
-
-def start_scheduler(bot: "telebot.TeleBot") -> None:
-    """Запускает фоновый поток с планировщиком задач."""
-    schedule.every(5).minutes.do(collect_metrics, bot)
-    schedule.every().day.at(cfg.backup_time).do(auto_backup, bot)
-    schedule.every().day.at(cfg.billing_check_time).do(check_billing, bot)
+    schedule.every(30).seconds.do(update_widget, bot)
 
     def _run():
         while True:

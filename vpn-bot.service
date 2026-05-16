@@ -1,12 +1,14 @@
 [Unit]
-Description=VPN Management Bot
-After=network.target
+Description=VPN Management Bot (KJZNNETx)
+After=network.target docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
 User=vpnuser
 WorkingDirectory=/home/vpnuser/vpn_bot
-ExecStart=/usr/bin/python3 /home/vpnuser/vpn_bot/bot.py
+ExecStartPre=/bin/mkdir -p /home/vpnuser/vpn_bot/data
+ExecStart=/home/vpnuser/vpn_bot/venv/bin/python bot.py
 Restart=always
 RestartSec=5
 StandardOutput=journal

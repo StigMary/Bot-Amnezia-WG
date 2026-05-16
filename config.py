@@ -9,7 +9,17 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 
-load_dotenv("/home/vpnuser/.env")
+# Ищем .env: сначала рядом со скриптом, потом стандартный путь продакшна
+_env_candidates = [
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+    "/home/vpnuser/.env",
+]
+for _env_path in _env_candidates:
+    if os.path.exists(_env_path):
+        load_dotenv(_env_path)
+        break
+else:
+    load_dotenv()  # fallback: поискать в CWD
 
 
 def _require(key: str) -> str:
@@ -35,10 +45,23 @@ class Config:
     )
 
     # --- Пути к файлам (можно переопределить через .env) ---
-    db_file: str = field(default_factory=lambda: os.getenv("DB_FILE", "/home/vpnuser/vpn_bot/data/vpn_bot.db"))
-    metrics_file: str = field(default_factory=lambda: os.getenv("METRICS_FILE", "/home/vpnuser/vpn_bot/data/metrics.csv"))
-    pid_file: str = field(default_factory=lambda: os.getenv("PID_FILE", "/home/vpnuser/vpn_bot/data/vpn_bot.pid"))
-    log_file: str = field(default_factory=lambda: os.getenv("LOG_FILE", "/home/vpnuser/vpn_bot/data/bot.log"))
+    # Дефолт: ./data/ рядом со скриптом (работает локально и на сервере)
+    db_file: str = field(default_factory=lambda: os.getenv(
+        "DB_FILE",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "vpn_bot.db")
+    ))
+    metrics_file: str = field(default_factory=lambda: os.getenv(
+        "METRICS_FILE",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "metrics.csv")
+    ))
+    pid_file: str = field(default_factory=lambda: os.getenv(
+        "PID_FILE",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "vpn_bot.pid")
+    ))
+    log_file: str = field(default_factory=lambda: os.getenv(
+        "LOG_FILE",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "bot.log")
+    ))
 
     # --- Расписание ---
     backup_time: str = "03:00"

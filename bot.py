@@ -6,14 +6,13 @@ import os
 import sys
 import signal
 import contextlib
-import fcntl
 
 import telebot
 
 from config import cfg, logger
 from database import init_db, log_audit
 from vpn_engine import auto_apply_qos
-from tasks import start_scheduler
+from handlers.tasks import start_scheduler
 import handlers.admin as admin_handler
 import handlers.client as client_handler
 
@@ -22,16 +21,25 @@ import handlers.client as client_handler
 
 _lock_file = None
 
+
 def check_single_instance():
+    """Предотвращает запуск нескольких копий бота через lock-файл (только Linux)."""
     global _lock_file
-    _lock_file = open(cfg.pid_file, "w")
+    if sys.platform == "win32":
+        return  # На Windows пропускаем flock
+
     try:
+        import fcntl
+        os.makedirs(os.path.dirname(cfg.pid_file), exist_ok=True)
+        _lock_file = open(cfg.pid_file, "w")
         fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         _lock_file.write(str(os.getpid()))
         _lock_file.flush()
     except IOError:
         logger.error("Бот уже запущен (flock). Выход.")
         sys.exit(1)
+    except ImportError:
+        logger.warning("fcntl недоступен — защита от двойного запуска отключена.")
 
 
 # ─── Graceful shutdown ────────────────────────────────────────────────────────
@@ -78,15 +86,16 @@ def main():
     signal.signal(signal.SIGINT,  lambda s, f: graceful_shutdown(bot, s, f))
 
     log_audit("BOT_START")
-    logger.info("VPN Bot v3.0 запущен!")
+    logger.info("VPN Bot v3.1 запущен!")
 
-    # Основной цикл
+    # Основной цикл с авто-рестартом polling
+    import time
     while True:
         try:
             bot.polling(none_stop=True, timeout=90)
         except Exception as e:
             logger.error(f"Сбой polling, перезапуск через 5 сек: {e}")
-            import time; time.sleep(5)
+            time.sleep(5)
 
 
 if __name__ == "__main__":

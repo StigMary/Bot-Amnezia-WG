@@ -120,7 +120,7 @@ def register(bot: telebot.TeleBot):
     @bot.message_handler(commands=["widget"])
     @admin_only
     def cmd_widget(message):
-        from tasks import widget_save
+        from handlers.tasks import widget_save
         msg = bot.send_message(message.chat.id, "⏳ Запуск мониторинга...")
         bot._widget_chat_id = message.chat.id
         bot._widget_msg_id  = msg.message_id
@@ -269,7 +269,7 @@ def register(bot: telebot.TeleBot):
             log_audit("BACKUP", admin_id=call.from_user.id)
 
         elif action == "menu_digest":
-            from tasks import morning_digest
+            from handlers.tasks import morning_digest
             morning_digest(bot)
             bot.send_message(call.message.chat.id, "✅ Дайджест отправлен.")
 

@@ -2,6 +2,7 @@
 database.py — Вся работа с SQLite.
 Инициализация таблиц, миграция схемы, CRUD-функции, аудит.
 """
+import os
 import sqlite3
 import contextlib
 from datetime import datetime
@@ -31,6 +32,11 @@ def get_conn():
 
 def init_db() -> None:
     """Создаёт таблицы и выполняет безопасную миграцию схемы."""
+    # Автосоздание директории для БД (например, data/)
+    db_dir = os.path.dirname(cfg.db_file)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
     with get_conn() as conn:
         # Таблица пользователей
         conn.execute("""
