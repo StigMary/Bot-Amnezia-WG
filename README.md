@@ -1,5 +1,9 @@
 # 🛡 VPN Management Bot
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+
 *Read this in [English](README_EN.md)*
 
 Telegram-бот для управления VPN-сервером на базе **AmneziaVPN / WireGuard**.  
@@ -35,14 +39,13 @@ vpn_bot/
 ├── bot.py                  # Точка входа, инициализация бота
 ├── config.py               # Загрузка настроек из .env
 ├── database.py             # SQLite: схема, миграции, CRUD
-├── tasks.py                # Планировщик (утренний дайджест, биллинг)
+├── tasks.py                # Планировщик (утренний дайджест, виджет)
 ├── vpn_engine.py           # Работа с WireGuard: парсинг, QoS
-├── admin.py                # (legacy-совместимость)
 ├── handlers/
 │   ├── admin.py            # Все команды администратора
 │   ├── client.py           # Клиентское меню и тикет-система
-│   ├── decorators.py       # Middleware: rate_limit, admin_only и др.
-│   └── tasks.py            # Хэндлеры задач (если вынесены)
+│   └── decorators.py       # Middleware: rate_limit, admin_only и др.
+├── deploy/                 # Документация и скрипты production-деплоя
 ├── data/                   # ← НЕ коммитить (БД, логи, пиды)
 ├── .env                    # ← НЕ коммитить (секреты)
 ├── .env.example            # Шаблон переменных окружения
@@ -54,39 +57,18 @@ vpn_bot/
 
 ## 🚀 Установка и деплой
 
-### 1. Клонировать репозиторий
+Полная инструкция по **Production-развёртыванию** (настройка `systemd`, `venv`, изоляция прав пользователя, скрипты авто-обновления) находится в папке [deploy/README.md](deploy/README.md).
+
+### Краткий запуск для разработки
 ```bash
 git clone https://github.com/ВАШ_АККАУНТ/vpn_bot.git
 cd vpn_bot
-```
-
-### 2. Установить зависимости
-```bash
-pip3 install -r requirements.txt
-```
-
-### 3. Настроить окружение
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env
-nano .env   # Вписать токен бота, admin_id и т.д.
-```
-
-### 4. Создать папку для данных
-```bash
-mkdir -p data
-```
-
-### 5. Запустить как systemd-сервис
-```bash
-sudo cp vpn-bot.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable vpn-bot
-sudo systemctl start vpn-bot
-```
-
-### Просмотр логов
-```bash
-journalctl -u vpn-bot -f
+# Заполните .env файл
+python bot.py
 ```
 
 ---
@@ -117,7 +99,7 @@ journalctl -u vpn-bot -f
 
 ## 📝 Лицензия
 
-Частный проект. Все права защищены.
+Проект распространяется под лицензией [GNU AGPLv3](LICENSE).
 
 ---
 

@@ -1,5 +1,9 @@
 # 🛡 VPN Management Bot
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+
 Telegram bot for managing a VPN server based on **AmneziaVPN / WireGuard**.  
 Allows the administrator to manage clients, subscriptions, and devices directly from Telegram.
 
@@ -33,14 +37,13 @@ vpn_bot/
 ├── bot.py                  # Entry point, bot initialization
 ├── config.py               # Settings from .env
 ├── database.py             # SQLite: schema, migrations, CRUD
-├── tasks.py                # Scheduler (morning digest, billing)
+├── tasks.py                # Scheduler (morning digest, widget)
 ├── vpn_engine.py           # WireGuard operations: parsing, QoS
-├── admin.py                # (legacy compatibility)
 ├── handlers/
 │   ├── admin.py            # All administrator commands
 │   ├── client.py           # Client menu and ticket system
-│   ├── decorators.py       # Middleware: rate_limit, admin_only, etc.
-│   └── tasks.py            # Task handlers (if extracted)
+│   └── decorators.py       # Middleware: rate_limit, admin_only, etc.
+├── deploy/                 # Documentation and scripts for production deployment
 ├── data/                   # ← DO NOT commit (DB, logs, pids)
 ├── .env                    # ← DO NOT commit (secrets)
 ├── .env.example            # Environment variables template
@@ -52,39 +55,18 @@ vpn_bot/
 
 ## 🚀 Installation and Deployment
 
-### 1. Clone the repository
+Full instructions for **Production Deployment** (setting up `systemd`, `venv`, user permission isolation, auto-update scripts) are located in the [deploy/README.md](deploy/README.md) folder.
+
+### Quick Start for Development
 ```bash
 git clone https://github.com/YOUR_ACCOUNT/vpn_bot.git
 cd vpn_bot
-```
-
-### 2. Install dependencies
-```bash
-pip3 install -r requirements.txt
-```
-
-### 3. Configure environment
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env
-nano .env   # Enter bot token, admin_id, etc.
-```
-
-### 4. Create data folder
-```bash
-mkdir -p data
-```
-
-### 5. Run as systemd service
-```bash
-sudo cp vpn-bot.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable vpn-bot
-sudo systemctl start vpn-bot
-```
-
-### View logs
-```bash
-journalctl -u vpn-bot -f
+# Fill in the .env file
+python bot.py
 ```
 
 ---
@@ -129,4 +111,4 @@ If you found this project useful, I would appreciate any support! 🙏
 
 ## 📝 License
 
-Private project. All rights reserved.
+This project is licensed under the [GNU AGPLv3](LICENSE).
