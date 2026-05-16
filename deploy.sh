@@ -8,42 +8,37 @@
 set -e
 
 BOT_DIR="/home/vpnuser/vpn_bot"
+VENV="$BOT_DIR/.venv"
 SERVICE="vpn-bot"
 BRANCH="${1:-main}"  # По умолчанию main, можно передать как аргумент
 
 echo "=== Деплой VPN Bot — ветка: $BRANCH ==="
 
 # 1. Остановить сервис
-echo "[1/6] Останавливаю бота..."
+echo "[1/5] Останавливаю бота..."
 sudo systemctl stop "$SERVICE" 2>/dev/null || true
 
 # 2. Обновить код
-echo "[2/6] Обновляю код с GitHub..."
+echo "[2/5] Обновляю код с GitHub..."
 cd "$BOT_DIR"
 git fetch origin
 git checkout "$BRANCH"
 git pull origin "$BRANCH"
 
-# 3. Создать/обновить venv
-echo "[3/6] Обновляю зависимости..."
-if [ ! -d "$BOT_DIR/venv" ]; then
-    python3 -m venv "$BOT_DIR/venv"
+# 3. Создать/обновить .venv
+echo "[3/5] Обновляю зависимости..."
+if [ ! -d "$VENV" ]; then
+    python3 -m venv "$VENV"
 fi
-"$BOT_DIR/venv/bin/pip" install -q --upgrade pip
-"$BOT_DIR/venv/bin/pip" install -q -r "$BOT_DIR/requirements.txt"
+"$VENV/bin/pip" install -q --upgrade pip
+"$VENV/bin/pip" install -q -r "$BOT_DIR/requirements.txt"
 
-# 4. Создать папку данных
-echo "[4/6] Проверяю папку data/..."
+# 4. Создать папку данных (если вдруг нет)
+echo "[4/5] Проверяю папку data/..."
 mkdir -p "$BOT_DIR/data"
 
-# 5. Установить/обновить systemd-сервис
-echo "[5/6] Обновляю systemd-сервис..."
-sudo cp "$BOT_DIR/vpn-bot.service" /etc/systemd/system/"$SERVICE".service
-sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE"
-
-# 6. Запустить
-echo "[6/6] Запускаю бота..."
+# 5. Запустить
+echo "[5/5] Запускаю бота..."
 sudo systemctl start "$SERVICE"
 sleep 3
 sudo systemctl status "$SERVICE" --no-pager
