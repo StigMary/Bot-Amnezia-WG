@@ -2,13 +2,15 @@
 bot.py — Главная точка входа.
 Инициализация, регистрация хэндлеров, запуск планировщика, graceful shutdown.
 """
-import os
-import sys
-import signal
+
 import contextlib
+import os
+import signal
+import sys
 
 try:
     import fcntl  # POSIX
+
     _HAS_FCNTL = True
 except ImportError:
     fcntl = None
@@ -16,6 +18,7 @@ except ImportError:
 
 try:
     import msvcrt  # Windows
+
     _HAS_MSVCRT = True
 except ImportError:
     msvcrt = None
@@ -23,17 +26,17 @@ except ImportError:
 
 import telebot
 
-from config import cfg, logger
-from database import init_db, log_audit
-from vpn_engine import auto_apply_qos
-from tasks import start_scheduler
 import handlers.admin as admin_handler
 import handlers.client as client_handler
-
+from config import cfg, logger
+from database import init_db, log_audit
+from tasks import start_scheduler
+from vpn_engine import auto_apply_qos
 
 # ─── Защита от двойного запуска ──────────────────────────────────────────────
 
 _lock_file = None
+
 
 def check_single_instance():
     """
@@ -50,14 +53,14 @@ def check_single_instance():
     if _HAS_FCNTL:
         try:
             fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (IOError, OSError):
+        except OSError:
             logger.error("Бот уже запущен (flock). Выход.")
             sys.exit(1)
     elif _HAS_MSVCRT:
         try:
             _lock_file.seek(0)
             msvcrt.locking(_lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-        except (IOError, OSError):
+        except OSError:
             logger.error("Бот уже запущен (msvcrt). Выход.")
             sys.exit(1)
     else:
@@ -73,6 +76,7 @@ def check_single_instance():
 
 
 # ─── Graceful shutdown ────────────────────────────────────────────────────────
+
 
 def graceful_shutdown(bot: telebot.TeleBot, signum, frame):
     logger.info(f"Получен сигнал {signum}. Завершение...")
@@ -90,6 +94,7 @@ def graceful_shutdown(bot: telebot.TeleBot, signum, frame):
 
 
 # ─── Точка входа ─────────────────────────────────────────────────────────────
+
 
 def main():
     check_single_instance()
@@ -113,13 +118,14 @@ def main():
 
     # Сигналы завершения
     signal.signal(signal.SIGTERM, lambda s, f: graceful_shutdown(bot, s, f))
-    signal.signal(signal.SIGINT,  lambda s, f: graceful_shutdown(bot, s, f))
+    signal.signal(signal.SIGINT, lambda s, f: graceful_shutdown(bot, s, f))
 
     log_audit("BOT_START")
     logger.info("VPN Bot v3.0 запущен!")
 
     # Основной цикл с экспоненциальным backoff
     import time
+
     backoff = 5
     max_backoff = 300  # 5 минут
     while True:

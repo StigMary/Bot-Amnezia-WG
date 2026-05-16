@@ -1,24 +1,29 @@
 """
 handlers/admin.py — Административная панель (ЦУП).
 """
-import os
-import csv
-import sqlite3
-import tempfile
+
 import contextlib
+import csv
+import os
 import subprocess
-import psutil
+import tempfile
+
 import matplotlib
+import psutil
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from datetime import datetime
 
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import telebot
 from telebot.types import (
-    ReplyKeyboardMarkup, ReplyKeyboardRemove,
-    KeyboardButton, KeyboardButtonRequestUser,
-    InlineKeyboardMarkup, InlineKeyboardButton
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    KeyboardButtonRequestUser,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 
 # {admin_id: ip} — пендинг привязки: какой IP ждёт контакт
@@ -26,26 +31,37 @@ _bind_pending: dict = {}
 
 from config import cfg, logger
 from database import (
-    log_audit, get_audit_log, get_all_users, update_user_field,
-    delete_user, bind_tg_to_ip, get_user_by_ip, extend_paid_until,
-    extend_paid_until_for_tg, get_devices_by_tg_id,
-)
-from vpn_engine import (
-    get_vpn_stats, apply_limit, delete_peer,
-    validate_vpn_ip, sanitize_alias, get_rf_ping,
-    get_rf_metrics, run_vpn_cmd
+    bind_tg_to_ip,
+    delete_user,
+    extend_paid_until,
+    extend_paid_until_for_tg,
+    get_all_users,
+    get_audit_log,
+    get_devices_by_tg_id,
+    get_user_by_ip,
+    log_audit,
+    update_user_field,
 )
 from handlers.decorators import admin_only, admin_only_callback, rate_limit
+from vpn_engine import (
+    apply_limit,
+    delete_peer,
+    get_rf_metrics,
+    get_rf_ping,
+    get_vpn_stats,
+    sanitize_alias,
+    validate_vpn_ip,
+)
 
 
 # --- Markdown v1 escape helper (защита от Bad Request: can't parse entities) ---
 def _md_escape(text):
-    """Экранирует спецсимволы Telegram Markdown v1: _ * ` [ """
+    """Экранирует спецсимволы Telegram Markdown v1: _ * ` ["""
     if text is None:
         return ""
     s = str(text)
-    for ch in ('\\', '_', '*', '`', '['):
-        s = s.replace(ch, '\\' + ch)
+    for ch in ("\\", "_", "*", "`", "["):
+        s = s.replace(ch, "\\" + ch)
     return s
 
 
@@ -60,13 +76,12 @@ def register(bot: telebot.TeleBot):
             except Exception:
                 pass
             return
-            
+
         # ── Панель администратора ──────────────────────────────────────
         markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         markup.add("👥 Клиенты", "⚡ Скорость")
         markup.add("📡 Серверы", "🛠 Сервис")
         bot.reply_to(message, "👑 KJZNNETx Admin", reply_markup=markup)
-
 
     # ── /bind <IP> <TG_ID> ───────────────────────────────────────────────────
     @bot.message_handler(commands=["bind"])
@@ -122,10 +137,12 @@ def register(bot: telebot.TeleBot):
         markup = InlineKeyboardMarkup(row_width=1)
         for u in results[:15]:
             flag = "🇸🇪" if "SE" in u["server_alias"] else "🇷🇺"
-            markup.add(InlineKeyboardButton(
-                f"{u['online_emoji']} {flag} {u['db_alias']} ({u['ip']})",
-                callback_data=f"ip|{u['ip']}|{u['server_alias']}"
-            ))
+            markup.add(
+                InlineKeyboardButton(
+                    f"{u['online_emoji']} {flag} {u['db_alias']} ({u['ip']})",
+                    callback_data=f"ip|{u['ip']}|{u['server_alias']}",
+                )
+            )
         bot.reply_to(message, f"🔍 Найдено: {len(results)}", reply_markup=markup)
 
     # ── /widget ───────────────────────────────────────────────────────────────
@@ -133,17 +150,16 @@ def register(bot: telebot.TeleBot):
     @admin_only
     def cmd_widget(message):
         from tasks import widget_save
+
         msg = bot.send_message(message.chat.id, "⏳ Запуск мониторинга...")
         bot._widget_chat_id = message.chat.id
-        bot._widget_msg_id  = msg.message_id
+        bot._widget_msg_id = msg.message_id
         widget_save(message.chat.id, msg.message_id)
         bot.pin_chat_message(message.chat.id, msg.message_id)
         bot.reply_to(message, "✅ Виджет создан. Обновление каждые 30 сек.")
 
     # ── Текстовые команды (4 кнопки главного меню) ───────────────────────────
-    @bot.message_handler(func=lambda m: m.text in (
-        "👥 Клиенты", "⚡ Скорость", "📡 Серверы", "🛠 Сервис"
-    ))
+    @bot.message_handler(func=lambda m: m.text in ("👥 Клиенты", "⚡ Скорость", "📡 Серверы", "🛠 Сервис"))
     @admin_only
     @rate_limit(2)
     def handle_menu(message):
@@ -153,8 +169,8 @@ def register(bot: telebot.TeleBot):
             markup = InlineKeyboardMarkup(row_width=1)
             markup.add(
                 InlineKeyboardButton("📋 Все пользователи", callback_data="menu_all_users"),
-                InlineKeyboardButton("📢 Рассылка",         callback_data="menu_broadcast"),
-                InlineKeyboardButton("📁 Экспорт CSV",      callback_data="menu_export"),
+                InlineKeyboardButton("📢 Рассылка", callback_data="menu_broadcast"),
+                InlineKeyboardButton("📁 Экспорт CSV", callback_data="menu_export"),
             )
             bot.send_message(message.chat.id, "👥 *Клиенты*", reply_markup=markup, parse_mode="Markdown")
 
@@ -164,8 +180,8 @@ def register(bot: telebot.TeleBot):
         elif text == "📡 Серверы":
             markup = InlineKeyboardMarkup(row_width=2)
             markup.add(
-                InlineKeyboardButton("🖥 Статус",      callback_data="menu_status"),
-                InlineKeyboardButton("📈 Нагрузка",    callback_data="menu_analysis"),
+                InlineKeyboardButton("🖥 Статус", callback_data="menu_status"),
+                InlineKeyboardButton("📈 Нагрузка", callback_data="menu_analysis"),
                 InlineKeyboardButton("🩺 Пинг (МСК)", callback_data="menu_ping"),
             )
             markup.add(
@@ -178,8 +194,8 @@ def register(bot: telebot.TeleBot):
             markup = InlineKeyboardMarkup(row_width=1)
             markup.add(
                 InlineKeyboardButton("📋 Журнал действий", callback_data="menu_journal"),
-                InlineKeyboardButton("💾 Бэкап сейчас",    callback_data="menu_backup"),
-                InlineKeyboardButton("🔔 Дайджест",        callback_data="menu_digest"),
+                InlineKeyboardButton("💾 Бэкап сейчас", callback_data="menu_backup"),
+                InlineKeyboardButton("🔔 Дайджест", callback_data="menu_digest"),
             )
             bot.send_message(message.chat.id, "🛠 *Сервис*", reply_markup=markup, parse_mode="Markdown")
 
@@ -199,19 +215,17 @@ def register(bot: telebot.TeleBot):
             msg = f"🌍 *Глобальная сеть ({len(stats)} шт):*\n\n"
             for s in stats:
                 sp = "🚀 Макс." if s["speed_limit"] == "max" else f"⏱ {s['speed_limit']} Мб/с"
-                msg += (f"{s['online_emoji']} *{s['db_alias']}* [{s['server_alias']}]\n"
-                        f"📱 `{s['ip']}` | ⚙️ {sp}\n"
-                        f"👁 Был: {s['last_seen']}\n"
-                        f"⬇️ {s['downloaded']} | ⬆️ {s['uploaded']}\n" + "➖"*10 + "\n")
+                msg += (
+                    f"{s['online_emoji']} *{s['db_alias']}* [{s['server_alias']}]\n"
+                    f"📱 `{s['ip']}` | ⚙️ {sp}\n"
+                    f"👁 Был: {s['last_seen']}\n"
+                    f"⬇️ {s['downloaded']} | ⬆️ {s['uploaded']}\n" + "➖" * 10 + "\n"
+                )
             for chunk in _split(msg):
                 bot.send_message(call.message.chat.id, chunk, parse_mode="Markdown")
 
         elif action == "menu_broadcast":
-            msg = bot.send_message(
-                call.message.chat.id,
-                "📢 *Рассылка*\nНапишите сообщение:",
-                parse_mode="Markdown"
-            )
+            msg = bot.send_message(call.message.chat.id, "📢 *Рассылка*\nНапишите сообщение:", parse_mode="Markdown")
             bot.register_next_step_handler(msg, _do_broadcast)
 
         elif action == "menu_export":
@@ -225,8 +239,7 @@ def register(bot: telebot.TeleBot):
             result = f"🇸🇪 *SE Server:*\n🖥 CPU: {cpu}%\n💾 RAM: {ram}%\n💽 Disk: {disk}%\n\n"
             rf = get_rf_metrics()
             if rf:
-                result += (f"🇷🇺 *RF Server:*\n🖥 CPU: {rf['cpu']:.1f}%\n"
-                           f"💾 RAM: {rf['ram']:.1f}%\n⏱ {rf['uptime']}")
+                result += f"🇷🇺 *RF Server:*\n🖥 CPU: {rf['cpu']:.1f}%\n💾 RAM: {rf['ram']:.1f}%\n⏱ {rf['uptime']}"
             else:
                 result += "🇷🇺 *RF Server:*\n❌ Недоступен"
             bot.edit_message_text(result, call.message.chat.id, w.message_id, parse_mode="Markdown")
@@ -249,13 +262,18 @@ def register(bot: telebot.TeleBot):
             bot.send_message(call.message.chat.id, "🩺 Измеряю пинг с МСК...")
             pings = get_rf_ping()
             if len(pings) == 5:
-                def fmt(v): return f"✅ {v} мс" if v != "timeout" else "❌ timeout"
-                t = (f"🩺 *Пинг (МСК):*\n\n"
-                     f"🌍 Google: {fmt(pings[0])}\n"
-                     f"🛡 Cloudflare: {fmt(pings[1])}\n"
-                     f"🇷🇺 Yandex: {fmt(pings[2])}\n"
-                     f"✈️ Telegram: {fmt(pings[3])}\n"
-                     f"📸 Instagram: {fmt(pings[4])}")
+
+                def fmt(v):
+                    return f"✅ {v} мс" if v != "timeout" else "❌ timeout"
+
+                t = (
+                    f"🩺 *Пинг (МСК):*\n\n"
+                    f"🌍 Google: {fmt(pings[0])}\n"
+                    f"🛡 Cloudflare: {fmt(pings[1])}\n"
+                    f"🇷🇺 Yandex: {fmt(pings[2])}\n"
+                    f"✈️ Telegram: {fmt(pings[3])}\n"
+                    f"📸 Instagram: {fmt(pings[4])}"
+                )
                 bot.send_message(call.message.chat.id, t, parse_mode="Markdown")
             else:
                 bot.send_message(call.message.chat.id, "❌ Нет ответа от РФ-сервера.")
@@ -266,8 +284,8 @@ def register(bot: telebot.TeleBot):
                 return bot.send_message(call.message.chat.id, "📋 Журнал пуст.")
             msg = "📋 *Последние действия:*\n\n"
             for r in rows:
-                ts   = _md_escape(r["timestamp"])
-                act  = _md_escape(r["action"])
+                ts = _md_escape(r["timestamp"])
+                act = _md_escape(r["action"])
                 ip_s = f" `{r['target_ip']}`" if r["target_ip"] else ""  # в backticks безопасно
                 det_s = f" — {_md_escape(r['details'])}" if r["details"] else ""
                 msg += f"🕐 {ts}\n🔹 {act}{ip_s}{det_s}\n\n"
@@ -290,6 +308,7 @@ def register(bot: telebot.TeleBot):
 
         elif action == "menu_digest":
             from tasks import morning_digest
+
             morning_digest(bot)
             bot.send_message(call.message.chat.id, "✅ Дайджест отправлен.")
 
@@ -301,10 +320,10 @@ def register(bot: telebot.TeleBot):
             return
 
         # -- Защита от случайной рассылки при попытке отмены --
-        txt = message.text.strip().lower() if message.text else ''
-        abort_kws = ['клиент', 'скорость', 'сервер', 'сервис', 'отмена', 'cancel', '/cancel']
+        txt = message.text.strip().lower() if message.text else ""
+        abort_kws = ["клиент", "скорость", "сервер", "сервис", "отмена", "cancel", "/cancel"]
         if any(kw in txt for kw in abort_kws):
-            bot.reply_to(message, '🚫 Рассылка отменена.')
+            bot.reply_to(message, "🚫 Рассылка отменена.")
             return
         all_users = get_all_users()
         unique_tg_ids = set()
@@ -314,6 +333,7 @@ def register(bot: telebot.TeleBot):
                 unique_tg_ids.add(tid)
 
         import time as _time
+
         sent, failed = 0, 0
         # Telegram bot API: ~30 msg/sec для разных чатов. Делаем паузу ~50мс между сообщениями.
         for tg_id in unique_tg_ids:
@@ -338,11 +358,11 @@ def register(bot: telebot.TeleBot):
                 failed += 1
             _time.sleep(0.05)
         log_audit("BROADCAST", details=f"sent={sent}, failed={failed}", admin_id=message.from_user.id)
-        bot.reply_to(message, f"✅ Рассылка завершена: отправлено *{sent}*, ошибка *{failed}*.",
-                     parse_mode="Markdown")
+        bot.reply_to(message, f"✅ Рассылка завершена: отправлено *{sent}*, ошибка *{failed}*.", parse_mode="Markdown")
 
     def _export_csv(bot, chat_id):
         import io
+
         all_users = get_all_users()
         output = io.StringIO()
         w = csv.writer(output)
@@ -352,25 +372,30 @@ def register(bot: telebot.TeleBot):
             if paid and len(paid) >= 10:
                 try:
                     from datetime import datetime as _dt
+
                     exp = _dt.fromisoformat(paid)
                     paid = "Бессрочно" if exp.year >= 2099 else exp.strftime("%d.%m.%Y")
                 except Exception:
                     pass
-            w.writerow([
-                ip,
-                d.get("alias") or "—",
-                d.get("tg_user_id") or "—",
-                d.get("protocol") or "—",
-                paid or "—",
-                d.get("speed_limit") or "max",
-            ])
+            w.writerow(
+                [
+                    ip,
+                    d.get("alias") or "—",
+                    d.get("tg_user_id") or "—",
+                    d.get("protocol") or "—",
+                    paid or "—",
+                    d.get("speed_limit") or "max",
+                ]
+            )
         output.seek(0)
         from datetime import datetime as _dt
+
         fname = f"vpn_export_{_dt.now().strftime('%d%m%Y')}.csv"
-        bot.send_document(chat_id, (fname, output.read().encode("utf-8-sig")),
-                          caption=f"📁 Экспорт клиентов: {len(all_users)} записей")
-
-
+        bot.send_document(
+            chat_id,
+            (fname, output.read().encode("utf-8-sig")),
+            caption=f"📁 Экспорт клиентов: {len(all_users)} записей",
+        )
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -383,8 +408,8 @@ def register(bot: telebot.TeleBot):
     @admin_only_callback
     def cb_page(call):
         parts = call.data.split("|")
-        page   = int(parts[1])
-        flt    = parts[2] if len(parts) > 2 else "all"
+        page = int(parts[1])
+        flt = parts[2] if len(parts) > 2 else "all"
         _send_users_page(bot, call.message.chat.id, page, call.message.message_id, flt)
 
     # ── Фильтры по списку ────────────────────────────────────────────────────────────
@@ -413,9 +438,8 @@ def register(bot: telebot.TeleBot):
             f"⏬ Скачано: {user_stat['downloaded']}\n"
             f"⏫ Отправлено: {user_stat['uploaded']}\n"
             f"👁 Последний вход: {user_stat['last_seen']}",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
-
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith("restart_confirm|"))
     @admin_only_callback
@@ -424,20 +448,31 @@ def register(bot: telebot.TeleBot):
         side = call.data.split("|")[1]
         bot.edit_message_text(f"🔄 Перезапускаю {side}...", call.message.chat.id, call.message.message_id)
         if side == "SE":
-            subprocess.run(["docker", "restart", "amnezia-awg", "amnezia-awg2"],
-                           capture_output=True, timeout=30)
+            subprocess.run(["docker", "restart", "amnezia-awg", "amnezia-awg2"], capture_output=True, timeout=30)
             bot.edit_message_text("✅ SE перезапущен!", call.message.chat.id, call.message.message_id)
             log_audit("RESTART_SE", admin_id=call.from_user.id)
         elif side == "RF":
             rf = next((c for c in cfg.vpn_containers if "RF" in c["alias"]), None)
             if rf:
                 try:
-                    subprocess.run([
-                        "ssh", "-p", str(rf["port"]),
-                        "-o", "StrictHostKeyChecking=yes",
-                        "-o", f"UserKnownHostsFile=/home/vpnuser/.ssh/known_hosts",
-                        rf["host"], "sudo", "docker", "restart", "amnezia-awg2"
-                    ], capture_output=True, timeout=25)
+                    subprocess.run(
+                        [
+                            "ssh",
+                            "-p",
+                            str(rf["port"]),
+                            "-o",
+                            "StrictHostKeyChecking=yes",
+                            "-o",
+                            "UserKnownHostsFile=/home/vpnuser/.ssh/known_hosts",
+                            rf["host"],
+                            "sudo",
+                            "docker",
+                            "restart",
+                            "amnezia-awg2",
+                        ],
+                        capture_output=True,
+                        timeout=25,
+                    )
                     bot.edit_message_text("✅ RF перезапущен!", call.message.chat.id, call.message.message_id)
                     log_audit("RESTART_RF", admin_id=call.from_user.id)
                 except Exception as e:
@@ -451,9 +486,9 @@ def register(bot: telebot.TeleBot):
         if not validate_vpn_ip(ip):
             return bot.answer_callback_query(call.id, "⛔ Невалидный IP!", show_alert=True)
         user = get_user_by_ip(ip)
-        db_alias   = user["alias"]       if user else "Неизвестно"
+        db_alias = user["alias"] if user else "Неизвестно"
         curr_speed = user["speed_limit"] if user else "max"
-        tg_id      = user["tg_user_id"]  if user else None
+        tg_id = user["tg_user_id"] if user else None
 
         tg_status = f"🔗 TG: `{tg_id}`" if tg_id else "❌ TG: не привязан"
         bind_label = "✅ Привязан" if tg_id else "🔗 Привязать TG"
@@ -463,6 +498,7 @@ def register(bot: telebot.TeleBot):
         if paid_until:
             try:
                 from datetime import datetime as _dt
+
                 exp = _dt.fromisoformat(paid_until)
                 days_left = (exp - _dt.now()).days
                 paid_str = f"📅 Оплачено до: `{exp.strftime('%d.%m.%Y')}` (дней: {days_left})"
@@ -473,31 +509,33 @@ def register(bot: telebot.TeleBot):
 
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
-            InlineKeyboardButton("🐌 10",  callback_data=f"set|{ip}|{server_alias}|10"),
-            InlineKeyboardButton("🚶 30",  callback_data=f"set|{ip}|{server_alias}|30"),
-            InlineKeyboardButton("🏃 50",  callback_data=f"set|{ip}|{server_alias}|50"),
+            InlineKeyboardButton("🐌 10", callback_data=f"set|{ip}|{server_alias}|10"),
+            InlineKeyboardButton("🚶 30", callback_data=f"set|{ip}|{server_alias}|30"),
+            InlineKeyboardButton("🏃 50", callback_data=f"set|{ip}|{server_alias}|50"),
             InlineKeyboardButton("🚀 100", callback_data=f"set|{ip}|{server_alias}|100"),
         )
-        markup.add(InlineKeyboardButton("💀 Карцер (1 Кбит/с)",  callback_data=f"set|{ip}|{server_alias}|punish"))
-        markup.add(InlineKeyboardButton("🔥 Снять лимит (Max)",  callback_data=f"set|{ip}|{server_alias}|max"))
-        markup.add(InlineKeyboardButton("✏️ Переименовать",       callback_data=f"rename|{ip}"))
+        markup.add(InlineKeyboardButton("💀 Карцер (1 Кбит/с)", callback_data=f"set|{ip}|{server_alias}|punish"))
+        markup.add(InlineKeyboardButton("🔥 Снять лимит (Max)", callback_data=f"set|{ip}|{server_alias}|max"))
+        markup.add(InlineKeyboardButton("✏️ Переименовать", callback_data=f"rename|{ip}"))
         if tg_id:
             markup.add(
-                InlineKeyboardButton(bind_label,        callback_data=f"bind_pick|{ip}"),
+                InlineKeyboardButton(bind_label, callback_data=f"bind_pick|{ip}"),
                 InlineKeyboardButton("🔓 Отвязать TG", callback_data=f"unbind|{ip}"),
             )
         else:
             markup.add(InlineKeyboardButton(bind_label, callback_data=f"bind_pick|{ip}"))
-        markup.add(InlineKeyboardButton("📅 Продлить подписку",     callback_data=f"extend|{ip}"))
-        markup.add(InlineKeyboardButton("❌ Удалить профиль",       callback_data=f"del|{ip}|{server_alias}"))
-        markup.add(InlineKeyboardButton("⬅️ К списку",              callback_data="page|0"))
+        markup.add(InlineKeyboardButton("📅 Продлить подписку", callback_data=f"extend|{ip}"))
+        markup.add(InlineKeyboardButton("❌ Удалить профиль", callback_data=f"del|{ip}|{server_alias}"))
+        markup.add(InlineKeyboardButton("⬅️ К списку", callback_data="page|0"))
         bot.edit_message_text(
             f"Управление: *{db_alias}* (`{ip}`)"
             f"\nСервер: {server_alias} | Скорость: {curr_speed}"
             f"\n{tg_status}"
             f"\n{paid_str}",
-            call.message.chat.id, call.message.message_id,
-            reply_markup=markup, parse_mode="Markdown"
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="Markdown",
         )
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith("extend|"))
@@ -507,24 +545,23 @@ def register(bot: telebot.TeleBot):
         ip = call.data.split("|")[1]
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
-            InlineKeyboardButton("+1 месяц",   callback_data=f"extend_confirm|{ip}|30"),
-            InlineKeyboardButton("+3 месяца",  callback_data=f"extend_confirm|{ip}|90"),
+            InlineKeyboardButton("+1 месяц", callback_data=f"extend_confirm|{ip}|30"),
+            InlineKeyboardButton("+3 месяца", callback_data=f"extend_confirm|{ip}|90"),
             InlineKeyboardButton("+6 месяцев", callback_data=f"extend_confirm|{ip}|180"),
-            InlineKeyboardButton("+1 год",     callback_data=f"extend_confirm|{ip}|365"),
+            InlineKeyboardButton("+1 год", callback_data=f"extend_confirm|{ip}|365"),
         )
-        markup.add(
-            InlineKeyboardButton("🗓 До 28-го числа", callback_data=f"extend_confirm|{ip}|set28")
-        )
+        markup.add(InlineKeyboardButton("🗓 До 28-го числа", callback_data=f"extend_confirm|{ip}|set28"))
         markup.add(
             InlineKeyboardButton("♾️ Бессрочно", callback_data=f"extend_confirm|{ip}|lifetime"),
-            InlineKeyboardButton("🗑 Сбросить", callback_data=f"extend_confirm|{ip}|reset")
+            InlineKeyboardButton("🗑 Сбросить", callback_data=f"extend_confirm|{ip}|reset"),
         )
         markup.add(InlineKeyboardButton("❌ Отмена", callback_data="page|0"))
         bot.edit_message_text(
-            f"📅 Сколько продлить IP `{ip}`?\n"
-            f"_(Дни прибавляются к текущей дате. Либо выберите точную установку)_",
-            call.message.chat.id, call.message.message_id,
-            reply_markup=markup, parse_mode="Markdown"
+            f"📅 Сколько продлить IP `{ip}`?\n_(Дни прибавляются к текущей дате. Либо выберите точную установку)_",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="Markdown",
         )
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith("extend_confirm|"))
@@ -549,10 +586,12 @@ def register(bot: telebot.TeleBot):
 
         if days_str == "set28":
             from datetime import datetime as _dt
+
             now = _dt.now()
             target_date = now.replace(day=28, hour=0, minute=0, second=0, microsecond=0)
             if target_date < now:
                 import calendar
+
                 days_in_month = calendar.monthrange(now.year, now.month)[1]
                 target_date = target_date + __import__("datetime").timedelta(days=days_in_month)
                 target_date = target_date.replace(day=28)
@@ -562,7 +601,9 @@ def register(bot: telebot.TeleBot):
             log_audit("EXTEND", target_ip=ip, details=f"set28 -> {iso} ({scope})", admin_id=call.from_user.id)
             bot.edit_message_text(
                 f"🗓 Дата оплаты установлена на **28 число** ({target_date.strftime('%d.%m.%Y')})!\n{scope}",
-                call.message.chat.id, call.message.message_id, parse_mode="Markdown"
+                call.message.chat.id,
+                call.message.message_id,
+                parse_mode="Markdown",
             )
             return
 
@@ -571,7 +612,9 @@ def register(bot: telebot.TeleBot):
             log_audit("EXTEND", target_ip=ip, details=f"reset ({scope})", admin_id=call.from_user.id)
             bot.edit_message_text(
                 f"🗑 Дата оплаты сброшена (отменена)!\n{scope}",
-                call.message.chat.id, call.message.message_id, parse_mode="Markdown"
+                call.message.chat.id,
+                call.message.message_id,
+                parse_mode="Markdown",
             )
             return
 
@@ -581,15 +624,15 @@ def register(bot: telebot.TeleBot):
             if tg_user_id:
                 try:
                     bot.send_message(
-                        tg_user_id,
-                        "♾️ *Бессрочный доступ!*\nВаш VPN активирован бессрочно.",
-                        parse_mode="Markdown"
+                        tg_user_id, "♾️ *Бессрочный доступ!*\nВаш VPN активирован бессрочно.", parse_mode="Markdown"
                     )
                 except Exception:
                     pass
             bot.edit_message_text(
                 f"✅ Бессрочный доступ установлен!\n{scope}",
-                call.message.chat.id, call.message.message_id, parse_mode="Markdown"
+                call.message.chat.id,
+                call.message.message_id,
+                parse_mode="Markdown",
             )
             return
 
@@ -600,6 +643,7 @@ def register(bot: telebot.TeleBot):
         else:
             new_date = extend_paid_until(ip, days)
         from datetime import datetime as _dt
+
         exp = _dt.fromisoformat(new_date)
         log_audit("EXTEND", target_ip=ip, details=f"days={days} ({scope})", admin_id=call.from_user.id)
 
@@ -607,26 +651,24 @@ def register(bot: telebot.TeleBot):
             try:
                 bot.send_message(
                     tg_user_id,
-                    f"🎉 *Оплата подтверждена!*\n\n"
-                    f"VPN продлён до *{exp.strftime('%d.%m.%Y')}*.",
-                    parse_mode="Markdown"
+                    f"🎉 *Оплата подтверждена!*\n\nVPN продлён до *{exp.strftime('%d.%m.%Y')}*.",
+                    parse_mode="Markdown",
                 )
             except Exception:
                 pass
 
         bot.edit_message_text(
-            f"✅ Подписка продлена!\n"
-            f"{scope}\n+{days} дней\n"
-            f"📅 До: *{exp.strftime('%d.%m.%Y')}*",
-            call.message.chat.id, call.message.message_id,
-            parse_mode="Markdown"
+            f"✅ Подписка продлена!\n{scope}\n+{days} дней\n📅 До: *{exp.strftime('%d.%m.%Y')}*",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
         )
 
     # ── Отвязать TG от профиля ────────────────────────────────────────────────
     @bot.callback_query_handler(func=lambda c: c.data.startswith("unbind|"))
     @admin_only_callback
     def cb_unbind(call):
-        ip   = call.data.split("|")[1]
+        ip = call.data.split("|")[1]
         user = get_user_by_ip(ip)
         if not user or not user["tg_user_id"]:
             bot.answer_callback_query(call.id, "⚠️ TG и так не привязан.", show_alert=True)
@@ -654,17 +696,14 @@ def register(bot: telebot.TeleBot):
 
         # Reply-keyboard с нативным picker-ом контактов
         markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add(KeyboardButton(
-            "👤 Выбрать пользователя",
-            request_user=KeyboardButtonRequestUser(request_id=1)
-        ))
+        markup.add(KeyboardButton("👤 Выбрать пользователя", request_user=KeyboardButtonRequestUser(request_id=1)))
         markup.add(KeyboardButton("❌ Отмена"))
 
         bot.send_message(
             call.message.chat.id,
             f"🔗 Выберите пользователя для IP `{ip}` из списка контактов:",
             reply_markup=markup,
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
 
     @bot.message_handler(content_types=["users_shared"])
@@ -680,8 +719,7 @@ def register(bot: telebot.TeleBot):
             tg_id = message.users_shared.users[0].user_id
         except Exception as e:
             logger.error(f"Ошибка чтения users_shared: {e}")
-            bot.send_message(message.chat.id, "❌ Не удалось получить TG ID.",
-                             reply_markup=ReplyKeyboardRemove())
+            bot.send_message(message.chat.id, "❌ Не удалось получить TG ID.", reply_markup=ReplyKeyboardRemove())
             return
         bind_tg_to_ip(ip, tg_id)
         log_audit("BIND", target_ip=ip, details=f"tg_id={tg_id}", admin_id=message.from_user.id)
@@ -691,7 +729,7 @@ def register(bot: telebot.TeleBot):
             message.chat.id,
             f"✅ *Привязано!*\nIP `{ip}` → TG ID `{tg_id}`",
             reply_markup=ReplyKeyboardRemove(),
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
         # Уведомления клиенту отключены по просьбе администратора (тихая привязка)
         # try:
@@ -707,8 +745,7 @@ def register(bot: telebot.TeleBot):
     @bot.message_handler(func=lambda m: m.text == "❌ Отмена" and m.from_user.id == cfg.admin_id)
     def handle_bind_cancel(message):
         _bind_pending.pop(message.from_user.id, None)
-        bot.send_message(message.chat.id, "❌ Привязка отменена.",
-                         reply_markup=ReplyKeyboardRemove())
+        bot.send_message(message.chat.id, "❌ Привязка отменена.", reply_markup=ReplyKeyboardRemove())
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith("set|"))
     @admin_only_callback
@@ -721,8 +758,9 @@ def register(bot: telebot.TeleBot):
         apply_limit(ip, speed, server_alias)
         update_user_field(ip, "speed_limit", speed)
         label = {"max": "Максимум", "punish": "💀 Карцер"}.get(speed, f"{speed} Мбит/с")
-        bot.edit_message_text(f"✅ `{ip}` → *{label}*", call.message.chat.id, call.message.message_id,
-                              parse_mode="Markdown")
+        bot.edit_message_text(
+            f"✅ `{ip}` → *{label}*", call.message.chat.id, call.message.message_id, parse_mode="Markdown"
+        )
         log_audit("SET_SPEED", ip, f"speed={speed}, server={server_alias}", call.from_user.id)
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith("rename|"))
@@ -751,11 +789,15 @@ def register(bot: telebot.TeleBot):
         markup = InlineKeyboardMarkup()
         markup.add(
             InlineKeyboardButton("⚠️ ДА, удалить!", callback_data=f"del_confirm|{ip}|{server_alias}"),
-            InlineKeyboardButton("Отмена", callback_data="page|0")
+            InlineKeyboardButton("Отмена", callback_data="page|0"),
         )
-        bot.edit_message_text(f"⚠️ *Удалить* `{ip}` с {server_alias}? Необратимо!",
-                              call.message.chat.id, call.message.message_id,
-                              reply_markup=markup, parse_mode="Markdown")
+        bot.edit_message_text(
+            f"⚠️ *Удалить* `{ip}` с {server_alias}? Необратимо!",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="Markdown",
+        )
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith("del_confirm|"))
     @admin_only_callback
@@ -765,12 +807,12 @@ def register(bot: telebot.TeleBot):
             return bot.answer_callback_query(call.id, "⛔ Невалидный IP!", show_alert=True)
         delete_peer(ip, server_alias)
         delete_user(ip)
-        bot.edit_message_text(f"🗑 `{ip}` удалён.", call.message.chat.id, call.message.message_id,
-                              parse_mode="Markdown")
+        bot.edit_message_text(f"🗑 `{ip}` удалён.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
         log_audit("DELETE_PEER", ip, f"server={server_alias}", call.from_user.id)
 
 
 # ── Вспомогательные функции ───────────────────────────────────────────────────
+
 
 def _split(text: str, size: int = 4000):
     chunks, cur = [], ""
@@ -787,27 +829,37 @@ def _split(text: str, size: int = 4000):
 def _send_users_page(bot, chat_id, page, message_id=None, flt="all"):
     all_users = get_vpn_stats()
     from datetime import datetime as _dt2
+
     from database import get_all_users as _gu
+
     _db = _gu()
     now2 = _dt2.now()
     if flt == "expired":
+
         def _chk(u):
             d = _db.get(u["ip"], {}).get("paid_until")
-            if not d: return False
+            if not d:
+                return False
             try:
                 e = _dt2.fromisoformat(d)
                 return e.year < 2099 and (e - now2).days < 0
-            except: return False
+            except:
+                return False
+
         users = [u for u in all_users if _chk(u)]
     elif flt == "expiring":
+
         def _chk(u):
             d = _db.get(u["ip"], {}).get("paid_until")
-            if not d: return False
+            if not d:
+                return False
             try:
                 e = _dt2.fromisoformat(d)
                 dl = (e - now2).days
                 return e.year < 2099 and 0 <= dl <= 7
-            except: return False
+            except:
+                return False
+
         users = [u for u in all_users if _chk(u)]
     elif flt == "unbound":
         users = [u for u in all_users if not _db.get(u["ip"], {}).get("tg_user_id")]
@@ -826,23 +878,24 @@ def _send_users_page(bot, chat_id, page, message_id=None, flt="all"):
     page = max(0, min(page, total - 1))
 
     markup = InlineKeyboardMarkup(row_width=1)
-    for u in users[page * per:(page + 1) * per]:
+    for u in users[page * per : (page + 1) * per]:
         sp = "Макс" if u["speed_limit"] == "max" else f"{u['speed_limit']} Мб/с"
         flag = "🇸🇪" if "SE" in u["server_alias"] else "🇷🇺"
-        markup.add(InlineKeyboardButton(
-            f"{u['online_emoji']} {flag} {u['db_alias']} [{sp}]",
-            callback_data=f"ip|{u['ip']}|{u['server_alias']}"
-        ))
+        markup.add(
+            InlineKeyboardButton(
+                f"{u['online_emoji']} {flag} {u['db_alias']} [{sp}]", callback_data=f"ip|{u['ip']}|{u['server_alias']}"
+            )
+        )
 
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"page|{page-1}"))
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"page|{page - 1}"))
     nav.append(InlineKeyboardButton("🔄", callback_data=f"page|{page}"))
     if page < total - 1:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"page|{page+1}"))
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"page|{page + 1}"))
     markup.row(*nav)
 
-    txt = f"🎛 *Абоненты (стр. {page+1}/{total})*\n🟢 онлайн  🟡 недавно  🔴 оффлайн"
+    txt = f"🎛 *Абоненты (стр. {page + 1}/{total})*\n🟢 онлайн  🟡 недавно  🔴 оффлайн"
     try:
         if message_id:
             bot.edit_message_text(txt, chat_id, message_id, reply_markup=markup, parse_mode="Markdown")
@@ -882,12 +935,15 @@ def _generate_chart():
         plt.plot(times, cpus, label="CPU (%)", color="green", marker="o", markersize=2)
         plt.plot(times, rams, label="RAM (%)", color="blue", marker="s", markersize=2)
         plt.title("Нагрузка SE (24ч)", fontsize=14)
-        plt.legend(); plt.grid(True, linestyle="--", alpha=0.7)
+        plt.legend()
+        plt.grid(True, linestyle="--", alpha=0.7)
         plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=2))
         plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        plt.gcf().autofmt_xdate(); plt.tight_layout()
+        plt.gcf().autofmt_xdate()
+        plt.tight_layout()
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        plt.savefig(tmp.name); plt.close()
+        plt.savefig(tmp.name)
+        plt.close()
         return tmp.name
     except Exception as e:
         logger.error(f"Ошибка графика: {e}")

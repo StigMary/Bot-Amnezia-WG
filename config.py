@@ -2,11 +2,13 @@
 config.py — Конфигурация и глобальный логгер.
 Импортируй `from config import cfg, logger` в любом модуле.
 """
-import os
+
 import logging
-from logging.handlers import RotatingFileHandler
+import os
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
+from logging.handlers import RotatingFileHandler
+from typing import Any
+
 from dotenv import load_dotenv
 
 load_dotenv("/home/vpnuser/.env")
@@ -30,13 +32,13 @@ class Config:
     rf_ssh_port: str = field(default_factory=lambda: os.getenv("RF_SSH_PORT", "22"))
 
     # --- ID закрытой группы (для @group_member_only) ---
-    group_chat_id: int = field(
-        default_factory=lambda: int(os.getenv("GROUP_CHAT_ID", "0"))
-    )
+    group_chat_id: int = field(default_factory=lambda: int(os.getenv("GROUP_CHAT_ID", "0")))
 
     # --- Пути к файлам (можно переопределить через .env) ---
     db_file: str = field(default_factory=lambda: os.getenv("DB_FILE", "/home/vpnuser/vpn_bot/data/vpn_bot.db"))
-    metrics_file: str = field(default_factory=lambda: os.getenv("METRICS_FILE", "/home/vpnuser/vpn_bot/data/metrics.csv"))
+    metrics_file: str = field(
+        default_factory=lambda: os.getenv("METRICS_FILE", "/home/vpnuser/vpn_bot/data/metrics.csv")
+    )
     pid_file: str = field(default_factory=lambda: os.getenv("PID_FILE", "/home/vpnuser/vpn_bot/data/vpn_bot.pid"))
     log_file: str = field(default_factory=lambda: os.getenv("LOG_FILE", "/home/vpnuser/vpn_bot/data/bot.log"))
 
@@ -51,12 +53,10 @@ class Config:
     # --- VPN / Биллинг ---
     vpn_subnet: str = "10.0.0.0/8"
     users_per_page: int = 7
-    allowed_speeds: frozenset = field(
-        default_factory=lambda: frozenset({"10", "30", "50", "100", "max", "punish"})
-    )
+    allowed_speeds: frozenset = field(default_factory=lambda: frozenset({"10", "30", "50", "100", "max", "punish"}))
 
     # --- Биллинг ---
-    billing_warn_days: int = 3      # За сколько дней предупреждать
+    billing_warn_days: int = 3  # За сколько дней предупреждать
     billing_critical_days: int = 1  # "Завтра последний день"
 
     # --- Реквизиты оплаты (показываются клиентам) ---
@@ -68,15 +68,33 @@ class Config:
     )
 
     @property
-    def vpn_containers(self) -> List[Dict[str, Any]]:
+    def vpn_containers(self) -> list[dict[str, Any]]:
         """Список VPN-контейнеров. Настраивается через .env."""
         container1 = os.getenv("VPN_CONTAINER_1", "amnezia-awg2")
         container2 = os.getenv("VPN_CONTAINER_2", "amnezia-awg")
         container3 = os.getenv("VPN_CONTAINER_3", "amnezia-awg2")
         return [
-            {"name": container1, "iface": "awg0", "alias": os.getenv("VPN_ALIAS_1", "Server 1"),  "host": "local", "port": None},
-            {"name": container2, "iface": "awg0", "alias": os.getenv("VPN_ALIAS_2", "Server 2"),  "host": "local", "port": None},
-            {"name": container3, "iface": "awg0", "alias": os.getenv("VPN_ALIAS_3", "Remote"),    "host": self.rf_host, "port": self.rf_ssh_port},
+            {
+                "name": container1,
+                "iface": "awg0",
+                "alias": os.getenv("VPN_ALIAS_1", "Server 1"),
+                "host": "local",
+                "port": None,
+            },
+            {
+                "name": container2,
+                "iface": "awg0",
+                "alias": os.getenv("VPN_ALIAS_2", "Server 2"),
+                "host": "local",
+                "port": None,
+            },
+            {
+                "name": container3,
+                "iface": "awg0",
+                "alias": os.getenv("VPN_ALIAS_3", "Remote"),
+                "host": self.rf_host,
+                "port": self.rf_ssh_port,
+            },
         ]
 
 
@@ -85,6 +103,7 @@ cfg = Config()
 
 
 # ─── Глобальный логгер ────────────────────────────────────────────────────────
+
 
 def _setup_logger() -> logging.Logger:
     log = logging.getLogger("vpn_bot")
