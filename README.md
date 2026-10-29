@@ -4,18 +4,6 @@
 
 ---
 
-## 📸 Скриншоты интерфейса
-
-| Дашборд серверов | Управление абонентами | Аналитика и графики |
-|:---:|:---:|:---:|
-| <img src="docs/screenshots/dashboard.png" width="240" alt="Дашборд"> | <img src="docs/screenshots/users_list.png" width="240" alt="Абоненты"> | <img src="docs/screenshots/load_charts.png" width="240" alt="Графики"> |
-
-| Управление сервером и службы | Мониторинг сессий и Xray |
-|:---:|:---:|
-| <img src="docs/screenshots/server_control.png" width="240" alt="Службы сервера"> | <img src="docs/screenshots/traffic_stats.png" width="240" alt="Статистика трафика"> |
-
----
-
 ## 🌟 Основные возможности
 
 * 📱 **Интерактивный WebApp Дашборд:** Графика нагрузки серверов (CPU, RAM, диск, сетевая активность в реальном времени), детальная статистика по клиентам, управление ключами и тарифами в 1 клик.
