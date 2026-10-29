@@ -68,12 +68,10 @@
             <input type="text" id="search-input" class="search-input" placeholder="Поиск по имени, IP или TG ID..." oninput="renderUsersList()">
         </div>
         
-        <div class="filter-tabs" style="overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; padding-bottom: 4px;">
-            <div class="filter-tab active" onclick="setFilter('all', this)">🌍 Все</div>
-            <div class="filter-tab" onclick="setFilter('online', this)">🟢 Онлайн</div>
-            <div class="filter-tab" onclick="setFilter('expired', this)">🔴 Должники</div>
-            <div class="filter-tab" onclick="setFilter('SE', this)">🇸🇪 SE</div>
-            <div class="filter-tab" onclick="setFilter('RU', this)">🇷🇺 RU</div>
+        <div class="filter-tabs" id="user-filter-tabs" style="overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; padding-bottom: 4px;">
+            <div class="filter-tab active" data-filter="all" onclick="setFilter('all', this)">🌍 Все</div>
+            <div class="filter-tab" data-filter="online" onclick="setFilter('online', this)">🟢 Онлайн</div>
+            <div class="filter-tab" data-filter="expired" onclick="setFilter('expired', this)">🔴 Должники</div>
         </div>
 
         <div id="users-list">
@@ -775,9 +773,46 @@
             return 'var(--success)';
         }
 
+        function updateServerFilterTabs() {
+            const tabsContainer = document.getElementById('user-filter-tabs');
+            if (!tabsContainer) return;
+
+            const servers = [];
+            const seen = new Set();
+            for (const u of (allUsersData || [])) {
+                if (u.server && !seen.has(u.server)) {
+                    seen.add(u.server);
+                    servers.push(u.server);
+                }
+            }
+
+            // Remove previous dynamic server tabs
+            Array.from(tabsContainer.querySelectorAll('.filter-tab-dynamic')).forEach(el => el.remove());
+
+            // Append dynamic server tabs
+            servers.forEach(srv => {
+                let label = srv;
+                const m = srv.match(/^([\uD83C][\uDDE6-\uDDFF]{2}|\S+)\s*([A-Za-z0-9_-]{2,})?/);
+                if (m) {
+                    const flag = m[1];
+                    const code = m[2] || '';
+                    label = code ? `${flag} ${code}` : flag;
+                } else {
+                    label = srv.split(' ')[0];
+                }
+
+                const tab = document.createElement('div');
+                tab.className = 'filter-tab filter-tab-dynamic' + (currentFilter === srv ? ' active' : '');
+                tab.setAttribute('data-filter', srv);
+                tab.textContent = label;
+                tab.onclick = function() { setFilter(srv, this); };
+                tabsContainer.appendChild(tab);
+            });
+        }
+
         function setFilter(filter, el) {
             currentFilter = filter;
-            document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('#user-filter-tabs .filter-tab').forEach(t => t.classList.remove('active'));
             if (el) el.classList.add('active');
             renderUsersList();
         }
@@ -1005,6 +1040,7 @@
         // Users
         async function loadUsers() {
             allUsersData = await apiCall('/users') || [];
+            updateServerFilterTabs();
             renderUsersList();
         }
 
@@ -1059,7 +1095,7 @@
                     return isExpired;
                 });
             } else if (currentFilter !== 'all') {
-                data = data.filter(u => u.server && u.server.includes(currentFilter));
+                data = data.filter(u => u.server && (u.server === currentFilter || u.server.includes(currentFilter) || currentFilter.includes(u.server)));
             }
             
             const q = document.getElementById('search-input') ? document.getElementById('search-input').value.toLowerCase().trim() : '';
@@ -1091,8 +1127,19 @@
                 else speedStr += 'M';
 
                 let flag = '🌍';
-                if (u.server && u.server.includes('SE')) flag = '🇸🇪';
-                else if (u.server && u.server.includes('RU')) flag = '🇷🇺';
+                if (u.server) {
+                    const m = u.server.match(/^([\uD83C][\uDDE6-\uDDFF]{2})/);
+                    if (m) {
+                        flag = m[1];
+                    } else if (u.server.includes('SE')) flag = '🇸🇪';
+                    else if (u.server.includes('RU')) flag = '🇷🇺';
+                    else if (u.server.includes('NL')) flag = '🇳🇱';
+                    else if (u.server.includes('DE')) flag = '🇩🇪';
+                    else if (u.server.includes('US')) flag = '🇺🇸';
+                    else if (u.server.includes('FI')) flag = '🇫🇮';
+                    else if (u.server.includes('KZ')) flag = '🇰🇿';
+                    else if (u.server.includes('TR')) flag = '🇹🇷';
+                }
 
                 let badgeClass = 'item-badge';
                 if (u.paid_until) {
