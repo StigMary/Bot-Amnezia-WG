@@ -337,7 +337,7 @@ async def require_admin(request: Request) -> dict:
         logger.warning(f"Auth error from {request.client}: {e}")
         raise HTTPException(status_code=401, detail=f"Auth error: {e}")
         
-    admin_id_list = [int(x) for x in cfg.admin_ids]
+    admin_id_list = [int(x) for x in getattr(cfg, "admin_ids", [cfg.admin_id])]
     if int(user.get("id", 0)) not in admin_id_list:
         logger.warning(f"Access denied: user {user.get('id')} is not in admin_ids {admin_id_list}")
         raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
@@ -654,36 +654,60 @@ async def get_server_services_endpoint(side: str, admin=Depends(require_admin)):
     import subprocess
     side_u = side.upper()
     services = []
-    if side_u == "RU" or "RU" in side_u:
-        # Docker: amnezia-awg2
-        try:
-            st = subprocess.check_output(["docker", "inspect", "--format", "{{.State.Status}}", "amnezia-awg2"], text=True).strip()
-            services.append({"name": "AmneziaWG (awg2)", "status": st, "action": "restart_container", "action_label": "🔄 Рестарт"})
-        except Exception:
-            services.append({"name": "AmneziaWG (awg2)", "status": "stopped", "action": "restart_container", "action_label": "🔄 Запуск"})
 
+    # 1. Поиск ноды в cfg.vpn_containers (динамические ноды NODE_1..N)
+    target = next(
+        (
+            c for c in cfg.vpn_containers
+            if (c.get("id") and c["id"].upper() == side_u)
+            or (c.get("alias") and c["alias"].upper() == side_u)
+            or (c.get("id") and side_u in c["id"].upper())
+            or (c.get("alias") and side_u in c["alias"].upper())
+        ),
+        None,
+    )
+
+    if target:
+        c_name = target.get("name") or "amnezia-awg2"
+        try:
+            if target.get("host") == "local":
+                st = subprocess.check_output(["docker", "inspect", "--format", "{{.State.Status}}", c_name], text=True).strip()
+            else:
+                user = target.get("user") or "root"
+                dest = f"{user}@{target['host']}" if user and "@" not in target["host"] else target["host"]
+                st = subprocess.check_output(["ssh", "-p", str(target.get("port") or 22), "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", dest, f"docker inspect --format '{{{{.State.Status}}}}' {c_name}"], text=True).strip()
+            services.append({"name": f"AmneziaWG ({c_name})", "status": st, "action": "restart_container", "action_label": "🔄 Рестарт"})
+        except Exception:
+            services.append({"name": f"AmneziaWG ({c_name})", "status": "stopped", "action": "restart_container", "action_label": "🔄 Запуск"})
+
+    if side_u == "RU" or "RU" in side_u or (target and target.get("host") == "local"):
         # Systemd: xray
         try:
             st = subprocess.check_output(["systemctl", "is-active", "xray"], text=True).strip()
-            services.append({"name": "Xray (Dokodemo Bridge)", "status": st, "action": "restart_xray", "action_label": "🔄 Рестарт"})
+            services.append({"name": "Xray Core", "status": st, "action": "restart_xray", "action_label": "🔄 Рестарт"})
         except Exception:
-            services.append({"name": "Xray (Dokodemo Bridge)", "status": "inactive", "action": "restart_xray", "action_label": "🔄 Запуск"})
+            pass
 
-        # Systemd: msk_bot
+        # Systemd: bot (vpn-bot или msk_bot)
+        bot_svc = "vpn-bot"
         try:
-            st = subprocess.check_output(["systemctl", "is-active", "msk_bot"], text=True).strip()
-            services.append({"name": "Telegram-бот", "status": st, "action": "restart_bot", "action_label": "🔄 Рестарт"})
+            st = subprocess.check_output(["systemctl", "is-active", bot_svc], text=True).strip()
         except Exception:
-            services.append({"name": "Telegram-бот", "status": "inactive", "action": "restart_bot", "action_label": "🔄 Запуск"})
+            bot_svc = "msk_bot"
+            try:
+                st = subprocess.check_output(["systemctl", "is-active", bot_svc], text=True).strip()
+            except Exception:
+                st = "inactive"
+        services.append({"name": "Telegram-бот", "status": st, "action": "restart_bot", "action_label": "🔄 Рестарт"})
 
         # Systemd: cloudflared
         try:
             st = subprocess.check_output(["systemctl", "is-active", "cloudflared"], text=True).strip()
             services.append({"name": "Cloudflare Tunnel", "status": st, "action": None, "action_label": None})
         except Exception:
-            services.append({"name": "Cloudflare Tunnel", "status": "inactive", "action": None, "action_label": None})
+            pass
 
-    elif side_u == "SE" or "SE" in side_u:
+    elif (side_u == "SE" or "SE" in side_u) and not target:
         try:
             if not cfg.se_host:
                 services.append({"name": "Службы SE", "status": "не настроен SE_HOST", "action": None, "action_label": None})
