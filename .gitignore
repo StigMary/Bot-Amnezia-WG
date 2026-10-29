@@ -33,6 +33,13 @@ legacy/
 # Temp files
 *.tmp
 
+# Node & screenshots scripts
+node_modules/
+package.json
+package-lock.json
+capture_screenshots.js
+setup_mock_env.py
+
 # OS & IDE
 .DS_Store
 Thumbs.db
