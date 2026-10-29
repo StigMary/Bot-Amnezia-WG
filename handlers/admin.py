@@ -1,12 +1,21 @@
 """
 handlers/admin.py — Административная панель (ЦУП).
+
+UX-улучшения v2:
+  1. Кнопка «🔍 Поиск» в главном меню + inline-поиск без команды
+  2. Фильтры в списке абонентов (Все / Просрочены / Истекают / Без TG)
+  3. Онлайн-статус и last_seen прямо в карточке абонента
+  4. Подтверждение перед рестартом SE/RU
+  5. Фильтр по серверу в «Все пользователи» (Все / SE / RU)
+  6. Текущая дата подписки при выборе продления
+  7. Выбор сервера для графика нагрузки (SE — исторический, RU — снимок)
+  8. Фильтры журнала аудита (все / скорость / продления / удаления)
+  9. Возврат к карточке абонента после смены скорости (_render_user_card)
 """
 
 import contextlib
-import csv
 import os
 import subprocess
-import tempfile
 
 import matplotlib
 import psutil
@@ -43,8 +52,8 @@ from handlers.decorators import admin_only, admin_only_callback, rate_limit
 from vpn_engine import (
     apply_limit,
     delete_peer,
-    get_rf_metrics,
-    get_rf_ping,
+    get_ru_metrics,
+    get_ru_ping,
     get_vpn_stats,
     sanitize_alias,
     validate_vpn_ip,
@@ -65,25 +74,224 @@ def _md_escape(text):
     return s
 
 
-def register(bot: telebot.TeleBot):
+PAGE_SIZE = 10
 
-    # ── /start — админка ────────────────────────────────────────────────────
-    @bot.message_handler(commands=["start"], func=lambda m: m.from_user.id == cfg.admin_id)
-    def cmd_start_admin(message):
-        if message.chat.type != "private":
+
+def _split(text: str, max_len: int = 4000):
+    """Splits long text into chunks for Telegram."""
+    chunks = []
+    while len(text) > max_len:
+        split_at = text.rfind('\n', 0, max_len)
+        if split_at == -1:
+            split_at = max_len
+        chunks.append(text[:split_at])
+        text = text[split_at:]
+    if text:
+        chunks.append(text)
+    return chunks
+
+
+def _send_users_page(bot, chat_id, page, edit_msg_id=None, flt='all'):
+    """Sends paginated list of users with filter support."""
+    from vpn_engine import get_vpn_stats
+    from datetime import datetime
+    stats = get_vpn_stats()
+    now = datetime.now()
+
+    # Apply filter
+    if flt == 'expired':
+        filtered = []
+        for u in stats:
+            pd = u.get('paid_until')
+            if pd:
+                try:
+                    exp = datetime.fromisoformat(pd)
+                    if exp.year < 2099 and exp < now:
+                        filtered.append(u)
+                except Exception:
+                    pass
+    elif flt == 'expiring':
+        filtered = []
+        for u in stats:
+            pd = u.get('paid_until')
+            if pd:
+                try:
+                    exp = datetime.fromisoformat(pd)
+                    days_left = (exp - now).days
+                    if 0 <= days_left <= 5:
+                        filtered.append(u)
+                except Exception:
+                    pass
+    elif flt == 'notg':
+        filtered = [u for u in stats if not u.get('tg_user_id')]
+    elif flt == 'se':
+        filtered = [u for u in stats if 'SE' in u.get('server_alias', '')]
+    elif flt == 'ru':
+        filtered = [u for u in stats if 'RU' in u.get('server_alias', '')]
+    else:
+        filtered = stats
+
+    total = len(filtered)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    chunk = filtered[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+    # Build message
+    filter_names = {
+        'all': '🌐 Все',
+        'expired': '🔴 Просрочены',
+        'expiring': '🟡 Истекают',
+        'notg': '📵 Без TG',
+        'se': '🇸🇪 SE',
+        'ru': '🇷🇺 RU',
+    }
+    lines = [f"👥 *Абоненты* | {filter_names.get(flt, flt)} | Стр. {page+1}/{total_pages} ({total} всего)\n"]
+    for u in chunk:
+        flag = '🇸🇪' if 'SE' in u.get('server_alias', '') else '🇷🇺'
+        alias = _md_escape(u.get('db_alias', u.get('ip', '?')))
+        pd = u.get('paid_until', '')
+        date_str = ''
+        if pd:
             try:
-                bot.delete_message(message.chat.id, message.message_id)
+                exp = datetime.fromisoformat(pd)
+                if exp.year >= 2099:
+                    date_str = ' ♾'
+                else:
+                    days = (exp - now).days
+                    date_str = f' ({days}д)'
             except Exception:
                 pass
+        lines.append(f"{u['online_emoji']} {flag} {alias}{date_str}")
+
+    text = '\n'.join(lines)
+
+    # Build navigation keyboard
+    markup = InlineKeyboardMarkup(row_width=3)
+    # Filter buttons
+    markup.add(
+        InlineKeyboardButton('🌐', callback_data=f'filter|all'),
+        InlineKeyboardButton('🔴', callback_data=f'filter|expired'),
+        InlineKeyboardButton('🟡', callback_data=f'filter|expiring'),
+        InlineKeyboardButton('📵', callback_data=f'filter|notg'),
+        InlineKeyboardButton('🇸🇪', callback_data=f'filter|se'),
+        InlineKeyboardButton('🇷🇺', callback_data=f'filter|ru'),
+    )
+    # Page navigation
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton('◀️', callback_data=f'page|{page-1}|{flt}'))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton('▶️', callback_data=f'page|{page+1}|{flt}'))
+    if nav:
+        markup.add(*nav)
+
+    if edit_msg_id:
+        try:
+            bot.edit_message_text(text, chat_id, edit_msg_id, reply_markup=markup, parse_mode='Markdown')
             return
+        except Exception:
+            pass
+    bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
 
-        # ── Панель администратора ──────────────────────────────────────
-        markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("👥 Клиенты", "⚡ Скорость")
-        markup.add("📡 Серверы", "🛠 Сервис")
-        bot.reply_to(message, "👑 KJZNNETx Admin", reply_markup=markup)
 
-    # ── /bind <IP> <TG_ID> ───────────────────────────────────────────────────
+def register(bot: telebot.TeleBot):
+
+# ── /start — админка ────────────────────────────────────────────────────
+    @bot.message_handler(commands=["start"], func=lambda m: m.from_user.id == cfg.admin_id)
+    def cmd_start_admin(message):
+        markup = ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.row(KeyboardButton("📡 Серверы"), KeyboardButton("🛠 Сервис"))
+        markup.row(KeyboardButton("🔍 Поиск"))
+
+        stats = get_vpn_stats()
+        _total2 = len(stats)
+        _online2 = sum(1 for s in stats if s.get("online_emoji", "") in ("🟢", "🟡"))
+
+        _cpu_se2 = psutil.cpu_percent(interval=None)
+        _ram_se2 = psutil.virtual_memory().percent
+
+        _rf2 = get_ru_metrics()
+        if _rf2:
+            _ru_status2 = f"🖥 {float(_rf2.get('cpu', 0)):.0f}%  💾 {float(_rf2.get('ram', 0)):.0f}%"
+        else:
+            _ru_status2 = "❌ недоступен"
+
+        import datetime as _dt2
+        _now2 = _dt2.datetime.now().strftime("%d.%m.%Y  %H:%M")
+        _dash2 = (
+            "👑 *KJZNNETx Admin Panel*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"🟢 Онлайн: *{_online2}*  |  👥 Всего: *{_total2}*\n"
+            f"🇸🇪 SE: 🖥 {_cpu_se2:.0f}%  💾 {_ram_se2:.0f}%\n"
+            f"🇷🇺 RU: {_ru_status2}\n"
+            f"🕐 {_now2}"
+        )
+
+        import time as _t
+        import os as _os
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, MenuButtonWebApp, WebAppInfo
+
+        _wh_url = _os.getenv("WEBHOOK_URL", "https://accomplished-travelers-acids-jaguar.trycloudflare.com").strip().rstrip("/")
+        _app_url = f"{_wh_url}?t={int(_t.time())}"
+
+        inline_markup = InlineKeyboardMarkup()
+        inline_markup.add(InlineKeyboardButton("🌐 Открыть Web-Панель", web_app=WebAppInfo(url=_app_url)))
+
+        try:
+            bot.set_chat_menu_button(
+                chat_id=message.chat.id,
+                menu_button=MenuButtonWebApp(type="web_app", text="Web-Панель", web_app=WebAppInfo(url=_app_url))
+            )
+        except Exception:
+            pass
+
+        bot.reply_to(message, _dash2, reply_markup=markup, parse_mode="Markdown")
+        bot.send_message(message.chat.id, "👇 Нажмите кнопку ниже для запуска Mini App:", reply_markup=inline_markup)
+
+    @bot.message_handler(commands=["link"])
+    @admin_only
+    def cmd_link_configs(message):
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(
+                message,
+                "ℹ️ <b>Использование:</b> <code>/link &lt;IP_КОНФИГА&gt; &lt;IP_ОСНОВНОГО_АБОНЕНТА&gt;</code>\n\n"
+                "<i>Пример:</i> <code>/link 10.8.1.32 10.8.1.5</code> — привяжет конфиг <code>10.8.1.32</code> к аккаунту абонента <code>10.8.1.5</code> (скопирует TG ID и подписку).",
+                parse_mode="HTML"
+            )
+            return
+        source_ip, target_ip = parts[1].strip(), parts[2].strip()
+        if not validate_vpn_ip(source_ip) or not validate_vpn_ip(target_ip):
+            bot.reply_to(message, "⛔ Один из IP невалиден.")
+            return
+        
+        target_user = get_user_by_ip(target_ip)
+        if not target_user:
+            bot.reply_to(message, f"⛔ Основной абонент с IP <code>{target_ip}</code> не найден в БД.", parse_mode="HTML")
+            return
+        if not target_user["tg_user_id"]:
+            bot.reply_to(message, f"⛔ У абонента <code>{target_ip}</code> ({target_user['alias']}) не привязан TG ID. Сначала привяжите его через <code>/bind</code>.", parse_mode="HTML")
+            return
+            
+        tg_id = target_user["tg_user_id"]
+        bind_tg_to_ip(source_ip, tg_id)
+        if target_user["paid_until"]:
+            update_user_field(source_ip, "paid_until", target_user["paid_until"])
+            
+        source_user = get_user_by_ip(source_ip)
+        src_name = source_user["alias"] if source_user else source_ip
+        tgt_name = target_user["alias"] or target_ip
+        
+        log_audit("LINK_CONFIGS", target_ip=source_ip, details=f"linked_to={target_ip},tg_id={tg_id}", admin_id=message.from_user.id)
+        bot.reply_to(
+            message,
+            f"✅ <b>Конфиги успешно объединены!</b>\n\n"
+            f"📱 Конфиг: <b>{src_name}</b> (<code>{source_ip}</code>)\n"
+            f"👤 Привязан к аккаунту: <b>{tgt_name}</b> (<code>{target_ip}</code> | TG ID: <code>{tg_id}</code>)\n"
+            f"📅 Подписка синхронизирована: <code>{target_user['paid_until'] or 'Безлимит'}</code>",
+            parse_mode="HTML"
+        )
+
     @bot.message_handler(commands=["bind"])
     @admin_only
     def cmd_bind(message):
@@ -105,6 +313,26 @@ def register(bot: telebot.TeleBot):
         bot.reply_to(message, f"✅ IP `{ip}` привязан к TG ID `{tg_id}`.", parse_mode="Markdown")
 
     # ── /backup ───────────────────────────────────────────────────────────────
+    
+    # ── /sync — Синхронизация БД с WireGuard/AmneziaWG ───────────────────────
+    @bot.message_handler(commands=["sync"])
+    @admin_only
+    def cmd_sync_db(message):
+        from vpn_engine import sync_db_with_vpn_peers, auto_apply_qos
+        msg = bot.reply_to(message, "⏳ Выполняю синхронизацию БД с серверами VPN...")
+        res = sync_db_with_vpn_peers()
+        auto_apply_qos()
+        log_audit("SYNC_DB", details=f"added={res['added']},cleaned={res['cleaned']}", admin_id=message.from_user.id)
+        bot.edit_message_text(
+            f"✅ <b>Синхронизация завершена!</b>\n\n"
+            f"📥 Добавлено новых пиров: <b>{res['added']}</b>\n"
+            f"🗑 Удалено фантомных записей: <b>{res['cleaned']}</b>\n"
+            f"👥 Всего активных абонентов: <b>{res['total_active']}</b>",
+            chat_id=message.chat.id,
+            message_id=msg.message_id,
+            parse_mode="HTML"
+        )
+
     @bot.message_handler(commands=["backup"])
     @admin_only
     @rate_limit(30)
@@ -134,16 +362,12 @@ def register(bot: telebot.TeleBot):
         if not results:
             bot.reply_to(message, f"🔍 Ничего не найдено по «{sanitize_alias(query)}».")
             return
-        markup = InlineKeyboardMarkup(row_width=1)
+        msg = f"🔍 Найдено: {len(results)}\n\n"
         for u in results[:15]:
             flag = "🇸🇪" if "SE" in u["server_alias"] else "🇷🇺"
-            markup.add(
-                InlineKeyboardButton(
-                    f"{u['online_emoji']} {flag} {u['db_alias']} ({u['ip']})",
-                    callback_data=f"ip|{u['ip']}|{u['server_alias']}",
-                )
-            )
-        bot.reply_to(message, f"🔍 Найдено: {len(results)}", reply_markup=markup)
+            msg += f"{u['online_emoji']} {flag} {u['db_alias']} ({u['ip']})\n"
+        msg += "\n_Подробное управление доступно в Web-панели._"
+        bot.reply_to(message, msg, parse_mode="Markdown")
 
     # ── /widget ───────────────────────────────────────────────────────────────
     @bot.message_handler(commands=["widget"])
@@ -159,25 +383,13 @@ def register(bot: telebot.TeleBot):
         bot.reply_to(message, "✅ Виджет создан. Обновление каждые 30 сек.")
 
     # ── Текстовые команды (4 кнопки главного меню) ───────────────────────────
-    @bot.message_handler(func=lambda m: m.text in ("👥 Клиенты", "⚡ Скорость", "📡 Серверы", "🛠 Сервис"))
+    @bot.message_handler(func=lambda m: m.text in ("📡 Серверы", "🛠 Сервис"))
     @admin_only
     @rate_limit(2)
     def handle_menu(message):
         text = message.text
 
-        if text == "👥 Клиенты":
-            markup = InlineKeyboardMarkup(row_width=1)
-            markup.add(
-                InlineKeyboardButton("📋 Все пользователи", callback_data="menu_all_users"),
-                InlineKeyboardButton("📢 Рассылка", callback_data="menu_broadcast"),
-                InlineKeyboardButton("📁 Экспорт CSV", callback_data="menu_export"),
-            )
-            bot.send_message(message.chat.id, "👥 *Клиенты*", reply_markup=markup, parse_mode="Markdown")
-
-        elif text == "⚡ Скорость":
-            _send_users_page(bot, message.chat.id, 0)
-
-        elif text == "📡 Серверы":
+        if text == "📡 Серверы":
             markup = InlineKeyboardMarkup(row_width=2)
             markup.add(
                 InlineKeyboardButton("🖥 Статус", callback_data="menu_status"),
@@ -185,8 +397,8 @@ def register(bot: telebot.TeleBot):
                 InlineKeyboardButton("🩺 Пинг (МСК)", callback_data="menu_ping"),
             )
             markup.add(
-                InlineKeyboardButton("🔄 Рестарт SE", callback_data="restart_confirm|SE"),
-                InlineKeyboardButton("🔄 Рестарт RF", callback_data="restart_confirm|RF"),
+                InlineKeyboardButton("🔄 Рестарт SE", callback_data="restart_ask|SE"),
+                InlineKeyboardButton("🔄 Рестарт RU", callback_data="restart_ask|RU"),
             )
             bot.send_message(message.chat.id, "📡 *Серверы*", reply_markup=markup, parse_mode="Markdown")
 
@@ -199,6 +411,32 @@ def register(bot: telebot.TeleBot):
             )
             bot.send_message(message.chat.id, "🛠 *Сервис*", reply_markup=markup, parse_mode="Markdown")
 
+    # ── #6: Кнопка «🔍 Поиск» — интерактивный поиск без /search ─────────────
+    @bot.message_handler(func=lambda m: m.text == "🔍 Поиск" and m.from_user.id == cfg.admin_id)
+    @admin_only
+    def btn_search_admin(message):
+        msg = bot.send_message(message.chat.id, "🔍 Введите имя или часть IP для поиска:")
+        bot.register_next_step_handler(msg, _do_search_step)
+
+    def _do_search_step(message):
+        if message.from_user.id != cfg.admin_id:
+            return
+        query = (message.text or "").strip().lower()
+        if not query:
+            bot.reply_to(message, "⚠️ Пустой запрос.")
+            return
+        stats = get_vpn_stats()
+        results = [s for s in stats if query in s["db_alias"].lower() or query in s["ip"]]
+        if not results:
+            bot.reply_to(message, f"🔍 Ничего не найдено по «{sanitize_alias(query)}».")
+            return
+        msg = f"🔍 Найдено: {len(results)}\n\n"
+        for u in results[:15]:
+            flag = "🇸🇪" if "SE" in u["server_alias"] else "🇷🇺"
+            msg += f"{u['online_emoji']} {flag} {u['db_alias']} ({u['ip']})\n"
+        msg += "\n_Подробное управление доступно в Web-панели._"
+        bot.reply_to(message, msg, parse_mode="Markdown")
+
     # ── Inline-обработчики подменю ────────────────────────────────────────────
     @bot.callback_query_handler(func=lambda c: c.data.startswith("menu_"))
     @admin_only_callback
@@ -206,97 +444,99 @@ def register(bot: telebot.TeleBot):
         action = call.data
         bot.answer_callback_query(call.id)
 
-        if action == "menu_all_users":
-            w = bot.send_message(call.message.chat.id, "⏳ Опрашиваю серверы...")
-            stats = get_vpn_stats()
-            bot.delete_message(call.message.chat.id, w.message_id)
-            if not stats:
-                return bot.send_message(call.message.chat.id, "❌ Нет данных.")
-            msg = f"🌍 *Глобальная сеть ({len(stats)} шт):*\n\n"
-            for s in stats:
-                sp = "🚀 Макс." if s["speed_limit"] == "max" else f"⏱ {s['speed_limit']} Мб/с"
-                msg += (
-                    f"{s['online_emoji']} *{s['db_alias']}* [{s['server_alias']}]\n"
-                    f"📱 `{s['ip']}` | ⚙️ {sp}\n"
-                    f"👁 Был: {s['last_seen']}\n"
-                    f"⬇️ {s['downloaded']} | ⬆️ {s['uploaded']}\n" + "➖" * 10 + "\n"
-                )
-            for chunk in _split(msg):
-                bot.send_message(call.message.chat.id, chunk, parse_mode="Markdown")
-
-        elif action == "menu_broadcast":
-            msg = bot.send_message(call.message.chat.id, "📢 *Рассылка*\nНапишите сообщение:", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, _do_broadcast)
-
-        elif action == "menu_export":
-            _export_csv(bot, call.message.chat.id)
-
-        elif action == "menu_status":
+        if action == "menu_status":
             w = bot.send_message(call.message.chat.id, "⏳ Снимаю телеметрию...")
             cpu = psutil.cpu_percent(1)
             ram = psutil.virtual_memory().percent
             disk = psutil.disk_usage("/").percent
-            result = f"🇸🇪 *SE Server:*\n🖥 CPU: {cpu}%\n💾 RAM: {ram}%\n💽 Disk: {disk}%\n\n"
-            rf = get_rf_metrics()
-            if rf:
-                result += f"🇷🇺 *RF Server:*\n🖥 CPU: {rf['cpu']:.1f}%\n💾 RAM: {rf['ram']:.1f}%\n⏱ {rf['uptime']}"
+
+            def _pbar(pct, width=8):
+                filled = int(round(pct / 100 * width))
+                bar = "█" * filled + "░" * (width - filled)
+                dot = "🔴" if pct > 80 else ("🟡" if pct > 60 else "🟢")
+                return f"{dot} `{bar}` {pct:.0f}%"
+
+            result = (
+                "📡 *Статус серверов*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "🇸🇪 *SE Server* (Main Node)\n"
+                f"🖥 CPU:  {_pbar(cpu)}\n"
+                f"💾 RAM:  {_pbar(ram)}\n"
+                f"💽 Disk: {_pbar(disk)}\n"
+            )
+            ru = get_ru_metrics()
+            if ru:
+                result += (
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "🇷🇺 *RU Server* (Node)\n"
+                    f"🖥 CPU:  {_pbar(float(ru['cpu']))}\n"
+                    f"💾 RAM:  {_pbar(float(ru['ram']))}\n"
+                    f"⏱ Uptime: `{ru['uptime']}`"
+                )
             else:
-                result += "🇷🇺 *RF Server:*\n❌ Недоступен"
+                result += "━━━━━━━━━━━━━━━━━━━━\n🇷🇺 *RU Server*\n❌ Недоступен"
             bot.edit_message_text(result, call.message.chat.id, w.message_id, parse_mode="Markdown")
 
         elif action == "menu_analysis":
-            bot.send_message(call.message.chat.id, "📊 Рисую график...")
-            report = _daily_analysis()
-            chart = _generate_chart()
-            if chart:
-                try:
-                    with open(chart, "rb") as p:
-                        bot.send_photo(call.message.chat.id, p, caption=report, parse_mode="Markdown")
-                finally:
-                    with contextlib.suppress(OSError):
-                        os.remove(chart)
-            else:
-                bot.send_message(call.message.chat.id, report, parse_mode="Markdown")
+            # #8: выбор сервера для графика
+            markup = InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                InlineKeyboardButton("🇸🇪 SE — График (24ч)", callback_data="analysis_chart|SE"),
+                InlineKeyboardButton("🇷🇺 RU — Снимок", callback_data="analysis_chart|RU"),
+            )
+            bot.send_message(
+                call.message.chat.id,
+                "📊 *Нагрузка — выберите сервер:*",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
 
         elif action == "menu_ping":
             bot.send_message(call.message.chat.id, "🩺 Измеряю пинг с МСК...")
-            pings = get_rf_ping()
+            pings = get_ru_ping()
             if len(pings) == 5:
 
-                def fmt(v):
-                    return f"✅ {v} мс" if v != "timeout" else "❌ timeout"
+                def _ping_bar(v):
+                    if not v or v == "timeout":
+                        return "🔴 ░░░░░░░░  timeout"
+                    try:
+                        ms = float(v)
+                        bars = min(8, max(1, int(ms / 25)))
+                        dot = "🟢" if ms < 50 else ("🟡" if ms < 120 else "🔴")
+                        return f"{dot} {'█' * bars}{'░' * (8 - bars)}  {ms:.0f} мс"
+                    except Exception:
+                        return f"⚪ {v}"
 
                 t = (
-                    f"🩺 *Пинг (МСК):*\n\n"
-                    f"🌍 Google: {fmt(pings[0])}\n"
-                    f"🛡 Cloudflare: {fmt(pings[1])}\n"
-                    f"🇷🇺 Yandex: {fmt(pings[2])}\n"
-                    f"✈️ Telegram: {fmt(pings[3])}\n"
-                    f"📸 Instagram: {fmt(pings[4])}"
+                    "🩺 *Пинг с 🇷🇺 Москвы:*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🌍 Google        {_ping_bar(pings[0])}\n"
+                    f"🛡 Cloudflare   {_ping_bar(pings[1])}\n"
+                    f"🇷🇺 Yandex       {_ping_bar(pings[2])}\n"
+                    f"✈️ Telegram      {_ping_bar(pings[3])}\n"
+                    f"📸 Instagram    {_ping_bar(pings[4])}"
                 )
                 bot.send_message(call.message.chat.id, t, parse_mode="Markdown")
             else:
-                bot.send_message(call.message.chat.id, "❌ Нет ответа от РФ-сервера.")
+                bot.send_message(call.message.chat.id, "❌ Нет ответа от RU-сервера.")
 
         elif action == "menu_journal":
-            rows = get_audit_log(15)
-            if not rows:
-                return bot.send_message(call.message.chat.id, "📋 Журнал пуст.")
-            msg = "📋 *Последние действия:*\n\n"
-            for r in rows:
-                ts = _md_escape(r["timestamp"])
-                act = _md_escape(r["action"])
-                ip_s = f" `{r['target_ip']}`" if r["target_ip"] else ""  # в backticks безопасно
-                det_s = f" — {_md_escape(r['details'])}" if r["details"] else ""
-                msg += f"🕐 {ts}\n🔹 {act}{ip_s}{det_s}\n\n"
-            for chunk in _split(msg):
-                try:
-                    bot.send_message(call.message.chat.id, chunk, parse_mode="Markdown")
-                except Exception as e:
-                    # Fallback: отправим без форматирования если что-то всё же не парсится
-                    logger_log = __import__("logging").getLogger("vpn_bot")
-                    logger_log.warning("Markdown parse failed in menu_journal: %s", e)
-                    bot.send_message(call.message.chat.id, chunk)
+            # #9: фильтры журнала аудита
+            markup = InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                InlineKeyboardButton("🌐 Все действия", callback_data="journal|all"),
+                InlineKeyboardButton("💀 Скорость/Карцер", callback_data="journal|SET_SPEED"),
+            )
+            markup.add(
+                InlineKeyboardButton("📅 Продления", callback_data="journal|EXTEND"),
+                InlineKeyboardButton("🗑 Удаления", callback_data="journal|DELETE_PEER"),
+            )
+            bot.send_message(
+                call.message.chat.id,
+                "📋 *Журнал действий — выберите фильтр:*",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
 
         elif action == "menu_backup":
             bot.send_message(call.message.chat.id, "📦 Собираю бэкап...")
@@ -312,107 +552,167 @@ def register(bot: telebot.TeleBot):
             morning_digest(bot)
             bot.send_message(call.message.chat.id, "✅ Дайджест отправлен.")
 
-    def _do_broadcast(message):
-        if message.from_user.id != cfg.admin_id:
-            return
-        if not message.text or message.text.strip() == "":
-            bot.reply_to(message, "❌ Пустое сообщение. Отмена.")
-            return
-
-        # -- Защита от случайной рассылки при попытке отмены --
-        txt = message.text.strip().lower() if message.text else ""
-        abort_kws = ["клиент", "скорость", "сервер", "сервис", "отмена", "cancel", "/cancel"]
-        if any(kw in txt for kw in abort_kws):
-            bot.reply_to(message, "🚫 Рассылка отменена.")
-            return
-        all_users = get_all_users()
-        unique_tg_ids = set()
-        for data in all_users.values():
-            tid = data.get("tg_user_id")
-            if tid:
-                unique_tg_ids.add(tid)
-
-        import time as _time
-
-        sent, failed = 0, 0
-        # Telegram bot API: ~30 msg/sec для разных чатов. Делаем паузу ~50мс между сообщениями.
-        for tg_id in unique_tg_ids:
-            try:
-                bot.send_message(tg_id, f"📢 {message.text}")
-                sent += 1
-            except telebot.apihelper.ApiTelegramException as e:
-                # Если упёрлись в лимит — Telegram возвращает retry_after.
-                retry_after = getattr(e, "result_json", {}).get("parameters", {}).get("retry_after")
-                if retry_after:
-                    logger.warning(f"Broadcast: flood limit, спим {retry_after} сек.")
-                    _time.sleep(int(retry_after) + 1)
-                    try:
-                        bot.send_message(tg_id, f"📢 {message.text}")
-                        sent += 1
-                        continue
-                    except Exception:
-                        failed += 1
-                else:
-                    failed += 1
-            except Exception:
-                failed += 1
-            _time.sleep(0.05)
-        log_audit("BROADCAST", details=f"sent={sent}, failed={failed}", admin_id=message.from_user.id)
-        bot.reply_to(message, f"✅ Рассылка завершена: отправлено *{sent}*, ошибка *{failed}*.", parse_mode="Markdown")
-
-    def _export_csv(bot, chat_id):
-        import io
-
-        all_users = get_all_users()
-        output = io.StringIO()
-        w = csv.writer(output)
-        w.writerow(["IP", "Имя", "TG ID", "Протокол", "Оплачено до", "Скорость"])
-        for ip, d in sorted(all_users.items()):
-            paid = d.get("paid_until") or ""
-            if paid and len(paid) >= 10:
-                try:
-                    from datetime import datetime as _dt
-
-                    exp = _dt.fromisoformat(paid)
-                    paid = "Бессрочно" if exp.year >= 2099 else exp.strftime("%d.%m.%Y")
-                except Exception:
-                    pass
-            w.writerow(
-                [
-                    ip,
-                    d.get("alias") or "—",
-                    d.get("tg_user_id") or "—",
-                    d.get("protocol") or "—",
-                    paid or "—",
-                    d.get("speed_limit") or "max",
-                ]
-            )
-        output.seek(0)
-        from datetime import datetime as _dt
-
-        fname = f"vpn_export_{_dt.now().strftime('%d%m%Y')}.csv"
-        bot.send_document(
-            chat_id,
-            (fname, output.read().encode("utf-8-sig")),
-            caption=f"📁 Экспорт клиентов: {len(all_users)} записей",
+def _daily_analysis():
+    try:
+        from database import get_server_history
+        rows = get_server_history("SE", 24)
+        if not rows:
+            return "❌ Мало данных для анализа SE."
+        peak_cpu = max(rows, key=lambda x: x.get("cpu", 0))
+        peak_ram = max(rows, key=lambda x: x.get("ram", 0))
+        peak_time = datetime.fromtimestamp(peak_cpu["timestamp"]).strftime("%d.%m %H:%M")
+        return (
+            "📈 *Анализ SE за 24ч:*\n"
+            f"🔥 Пик CPU: `{peak_cpu.get('cpu', 0):.1f}%` ({peak_time})\n"
+            f"💾 Пик RAM: `{peak_ram.get('ram', 0):.1f}%`\n"
+            f"📊 Замеров: {len(rows)}"
         )
+    except Exception as e:
+        logger.error(f"Ошибка анализа SE: {e}")
+        return "❌ Ошибка при формировании анализа."
+
+
+def _generate_chart():
+    import tempfile
+    try:
+        from database import get_server_history
+        rows = get_server_history("SE", 24)
+        if len(rows) < 2:
+            return None
+        times = [datetime.fromtimestamp(r["timestamp"]) for r in rows]
+        cpus = [float(r.get("cpu", 0)) for r in rows]
+        rams = [float(r.get("ram", 0)) for r in rows]
+
+        fig, ax = plt.subplots(figsize=(9, 4.5), dpi=120)
+        ax.plot(times, cpus, label="CPU (%)", color="#ff5722", linewidth=1.8, marker="o", markersize=3)
+        ax.plot(times, rams, label="RAM (%)", color="#2196f3", linewidth=1.8, marker="s", markersize=3)
+        ax.set_title("Нагрузка SE Server (последние 24ч)", fontsize=13, fontweight="bold", pad=10)
+        ax.set_ylim(0, 105)
+        ax.set_ylabel("Использование (%)", fontsize=10)
+        ax.legend(loc="upper left")
+        ax.grid(True, linestyle="--", alpha=0.5)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        fig.autofmt_xdate()
+        fig.tight_layout()
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        fig.savefig(tmp.name)
+        plt.close(fig)
+        return tmp.name
+    except Exception as e:
+        logger.error(f"Ошибка генерации графика SE: {e}")
+        return None
+
+
+    # ── #8: График / Нагрузка — обработчик выбора сервера ────────────────────
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("analysis_chart|"))
+    @admin_only_callback
+    def cb_analysis_chart(call):
+        bot.answer_callback_query(call.id)
+        side = call.data.split("|")[1]
+        if side == "SE":
+            bot.send_message(call.message.chat.id, "📊 Рисую график SE...")
+            report = _daily_analysis()
+            chart = _generate_chart()
+            if chart:
+                try:
+                    with open(chart, "rb") as p:
+                        bot.send_photo(call.message.chat.id, p, caption=report, parse_mode="Markdown")
+                finally:
+                    with contextlib.suppress(OSError):
+                        os.remove(chart)
+            else:
+                bot.send_message(call.message.chat.id, report, parse_mode="Markdown")
+        elif side == "RU":
+            ru = get_ru_metrics()
+            if ru:
+                recv_mb = ru.get("net_recv", 0) // 1024 // 1024
+                sent_mb = ru.get("net_sent", 0) // 1024 // 1024
+                msg = (
+                    f"🇷🇺 *RU Server — Текущий снимок:*\n\n"
+                    f"🖥 CPU: `{ru['cpu']:.1f}%`\n"
+                    f"💾 RAM: `{ru['ram']:.1f}%`\n"
+                    f"⏱ Uptime: `{ru['uptime']}`\n"
+                    f"⬇️ Всего получено: `{recv_mb:,} МБ`\n"
+                    f"⬆️ Всего отправлено: `{sent_mb:,} МБ`\n\n"
+                    f"_⚠️ Исторических данных RU нет — только текущий снимок._"
+                )
+                bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+            else:
+                bot.send_message(call.message.chat.id, "❌ RU сервер недоступен.")
+
+    # ── #9: Журнал аудита с фильтром по типу действий ────────────────────────
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("journal|"))
+    @admin_only_callback
+    def cb_journal_filter(call):
+        bot.answer_callback_query(call.id)
+        action_filter = call.data.split("|")[1]
+
+        rows = get_audit_log(50)  # берём больше, т.к. будем фильтровать
+        if action_filter != "all":
+            rows = [r for r in rows if r["action"] == action_filter]
+        rows = rows[:15]
+
+        if not rows:
+            return bot.send_message(call.message.chat.id, "📋 Нет записей по данному фильтру.")
+
+        filter_labels = {
+            "all": "🌐 Все действия",
+            "SET_SPEED": "💀 Изменения скорости",
+            "EXTEND": "📅 Продления подписок",
+            "DELETE_PEER": "🗑 Удаления профилей",
+        }
+        label = filter_labels.get(action_filter, action_filter)
+        _icons = {
+            "SET_SPEED": "⚡", "EXTEND": "📅", "DELETE_PEER": "🗑",
+            "BIND": "🔗", "UNBIND": "🔓", "RENAME": "✏️",
+            "BROADCAST": "📢", "BACKUP": "💾", "BOT_START": "🚀",
+            "BOT_SHUTDOWN": "🛑", "AUTO_PUNISH": "💀",
+        }
+        _names = {
+            "SET_SPEED": "Изменил скорость", "EXTEND": "Продлил подписку",
+            "DELETE_PEER": "Удалил профиль", "BIND": "Привязал TG",
+            "UNBIND": "Отвязал TG", "RENAME": "Переименовал",
+            "BROADCAST": "Рассылка", "BACKUP": "Создал бэкап",
+            "BOT_START": "Бот запущен", "BOT_SHUTDOWN": "Бот остановлен",
+            "AUTO_PUNISH": "Авто-карцер",
+        }
+        msg = f"📋 *{label}:*\n━━━━━━━━━━━━━━━━━━━━\n"
+        for r in rows:
+            ts_raw = r["timestamp"] or ""
+            ts_short = ts_raw[5:16] if len(ts_raw) >= 16 else ts_raw
+            act_key = r["action"] or ""
+            icon = _icons.get(act_key, "🔹")
+            act_name = _names.get(act_key, _md_escape(act_key))
+            ip_s = f"\n   📍 `{r['target_ip']}`" if r["target_ip"] else ""
+            det_s = f" — {_md_escape(r['details'])}" if r["details"] else ""
+            msg += f"{icon} *{act_name}*   `{ts_short}`{ip_s}{det_s}\n\n"
+        for chunk in _split(msg):
+            try:
+                bot.send_message(call.message.chat.id, chunk, parse_mode="Markdown")
+            except Exception as e:
+                logger_log = __import__("logging").getLogger("vpn_bot")
+                logger_log.warning("Markdown parse failed in cb_journal_filter: %s", e)
+                bot.send_message(call.message.chat.id, chunk)
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
     @bot.callback_query_handler(func=lambda c: c.data == "cancel_action")
     @admin_only_callback
     def cb_cancel(call):
+        bot.answer_callback_query(call.id)
         bot.edit_message_text("❌ Действие отменено.", call.message.chat.id, call.message.message_id)
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith("page|"))
     @admin_only_callback
     def cb_page(call):
+        bot.answer_callback_query(call.id)
         parts = call.data.split("|")
         page = int(parts[1])
         flt = parts[2] if len(parts) > 2 else "all"
         _send_users_page(bot, call.message.chat.id, page, call.message.message_id, flt)
 
-    # ── Фильтры по списку ────────────────────────────────────────────────────────────
+    # ── #2: Фильтры по списку абонентов ──────────────────────────────────────
     @bot.callback_query_handler(func=lambda c: c.data.startswith("filter|"))
     @admin_only_callback
     def cb_filter(call):
@@ -441,510 +741,70 @@ def register(bot: telebot.TeleBot):
             parse_mode="Markdown",
         )
 
+    # ── #4: Экран подтверждения рестарта ─────────────────────────────────────
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("restart_ask|"))
+    @admin_only_callback
+    def cb_restart_ask(call):
+        bot.answer_callback_query(call.id)
+        side = call.data.split("|")[1]
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton(f"⚠️ Да, перезапустить {side}!", callback_data=f"restart_confirm|{side}"),
+            InlineKeyboardButton("❌ Отмена", callback_data="cancel_action"),
+        )
+        bot.edit_message_text(
+            f"⚠️ *Вы уверены?*\n\n"
+            f"Перезапуск *{side}* отключит всех клиентов этого сервера на *10–30 секунд*.\n\n"
+            f"Продолжить?",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="Markdown",
+        )
+
     @bot.callback_query_handler(func=lambda c: c.data.startswith("restart_confirm|"))
     @admin_only_callback
     @rate_limit(30)
     def cb_restart(call):
+        bot.answer_callback_query(call.id)
         side = call.data.split("|")[1]
         bot.edit_message_text(f"🔄 Перезапускаю {side}...", call.message.chat.id, call.message.message_id)
         if side == "SE":
-            subprocess.run(["docker", "restart", "amnezia-awg", "amnezia-awg2"], capture_output=True, timeout=30)
-            bot.edit_message_text("✅ SE перезапущен!", call.message.chat.id, call.message.message_id)
+            local_names = list(dict.fromkeys(
+                c["name"] for c in cfg.vpn_containers
+                if c["host"] == "local" and c.get("name")
+            ))
+            subprocess.run(["docker", "restart", *local_names], capture_output=True, timeout=30)
+            from vpn_engine import auto_apply_qos
+            auto_apply_qos()
+            bot.edit_message_text("✅ SE перезапущен и QoS восстановлен!", call.message.chat.id, call.message.message_id)
             log_audit("RESTART_SE", admin_id=call.from_user.id)
-        elif side == "RF":
-            rf = next((c for c in cfg.vpn_containers if "RF" in c["alias"]), None)
-            if rf:
+        elif side == "RU":
+            ru = next((c for c in cfg.vpn_containers if "RU" in c["alias"]), None)
+            if ru:
                 try:
                     subprocess.run(
                         [
                             "ssh",
                             "-p",
-                            str(rf["port"]),
+                            str(ru["port"]),
                             "-o",
                             "StrictHostKeyChecking=yes",
                             "-o",
-                            "UserKnownHostsFile=/home/vpnuser/.ssh/known_hosts",
-                            rf["host"],
+                            f"UserKnownHostsFile={os.path.expanduser('~/.ssh/known_hosts')}",
+                            ru["host"],
                             "sudo",
                             "docker",
                             "restart",
-                            "amnezia-awg2",
+                            ru["name"],
                         ],
                         capture_output=True,
                         timeout=25,
                     )
-                    bot.edit_message_text("✅ RF перезапущен!", call.message.chat.id, call.message.message_id)
-                    log_audit("RESTART_RF", admin_id=call.from_user.id)
+                    from vpn_engine import auto_apply_qos
+                    auto_apply_qos()
+                    bot.edit_message_text("✅ RU перезапущен и QoS восстановлен!", call.message.chat.id, call.message.message_id)
+                    log_audit("RESTART_RU", admin_id=call.from_user.id)
                 except Exception as e:
-                    logger.error(f"Рестарт RF: {e}")
-                    bot.edit_message_text("❌ Ошибка рестарта RF.", call.message.chat.id, call.message.message_id)
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("ip|"))
-    @admin_only_callback
-    def cb_ip(call):
-        _, ip, server_alias = call.data.split("|")
-        if not validate_vpn_ip(ip):
-            return bot.answer_callback_query(call.id, "⛔ Невалидный IP!", show_alert=True)
-        user = get_user_by_ip(ip)
-        db_alias = user["alias"] if user else "Неизвестно"
-        curr_speed = user["speed_limit"] if user else "max"
-        tg_id = user["tg_user_id"] if user else None
-
-        tg_status = f"🔗 TG: `{tg_id}`" if tg_id else "❌ TG: не привязан"
-        bind_label = "✅ Привязан" if tg_id else "🔗 Привязать TG"
-
-        # Дата оплаты
-        paid_until = user["paid_until"] if user else None
-        if paid_until:
-            try:
-                from datetime import datetime as _dt
-
-                exp = _dt.fromisoformat(paid_until)
-                days_left = (exp - _dt.now()).days
-                paid_str = f"📅 Оплачено до: `{exp.strftime('%d.%m.%Y')}` (дней: {days_left})"
-            except Exception:
-                paid_str = "📅 Оплата: ошибка"
-        else:
-            paid_str = "📅 Оплата: не задана"
-
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton("🐌 10", callback_data=f"set|{ip}|{server_alias}|10"),
-            InlineKeyboardButton("🚶 30", callback_data=f"set|{ip}|{server_alias}|30"),
-            InlineKeyboardButton("🏃 50", callback_data=f"set|{ip}|{server_alias}|50"),
-            InlineKeyboardButton("🚀 100", callback_data=f"set|{ip}|{server_alias}|100"),
-        )
-        markup.add(InlineKeyboardButton("💀 Карцер (1 Кбит/с)", callback_data=f"set|{ip}|{server_alias}|punish"))
-        markup.add(InlineKeyboardButton("🔥 Снять лимит (Max)", callback_data=f"set|{ip}|{server_alias}|max"))
-        markup.add(InlineKeyboardButton("✏️ Переименовать", callback_data=f"rename|{ip}"))
-        if tg_id:
-            markup.add(
-                InlineKeyboardButton(bind_label, callback_data=f"bind_pick|{ip}"),
-                InlineKeyboardButton("🔓 Отвязать TG", callback_data=f"unbind|{ip}"),
-            )
-        else:
-            markup.add(InlineKeyboardButton(bind_label, callback_data=f"bind_pick|{ip}"))
-        markup.add(InlineKeyboardButton("📅 Продлить подписку", callback_data=f"extend|{ip}"))
-        markup.add(InlineKeyboardButton("❌ Удалить профиль", callback_data=f"del|{ip}|{server_alias}"))
-        markup.add(InlineKeyboardButton("⬅️ К списку", callback_data="page|0"))
-        bot.edit_message_text(
-            f"Управление: *{db_alias}* (`{ip}`)"
-            f"\nСервер: {server_alias} | Скорость: {curr_speed}"
-            f"\n{tg_status}"
-            f"\n{paid_str}",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=markup,
-            parse_mode="Markdown",
-        )
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("extend|"))
-    @admin_only_callback
-    def cb_extend(call):
-        """Shows duration options for extending paid_until."""
-        ip = call.data.split("|")[1]
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton("+1 месяц", callback_data=f"extend_confirm|{ip}|30"),
-            InlineKeyboardButton("+3 месяца", callback_data=f"extend_confirm|{ip}|90"),
-            InlineKeyboardButton("+6 месяцев", callback_data=f"extend_confirm|{ip}|180"),
-            InlineKeyboardButton("+1 год", callback_data=f"extend_confirm|{ip}|365"),
-        )
-        markup.add(InlineKeyboardButton("🗓 До 28-го числа", callback_data=f"extend_confirm|{ip}|set28"))
-        markup.add(
-            InlineKeyboardButton("♾️ Бессрочно", callback_data=f"extend_confirm|{ip}|lifetime"),
-            InlineKeyboardButton("🗑 Сбросить", callback_data=f"extend_confirm|{ip}|reset"),
-        )
-        markup.add(InlineKeyboardButton("❌ Отмена", callback_data="page|0"))
-        bot.edit_message_text(
-            f"📅 Сколько продлить IP `{ip}`?\n_(Дни прибавляются к текущей дате. Либо выберите точную установку)_",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=markup,
-            parse_mode="Markdown",
-        )
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("extend_confirm|"))
-    @admin_only_callback
-    def cb_extend_confirm(call):
-        _, ip, days_str = call.data.split("|")
-
-        # Определяем целевой набор IP: все устройства аккаунта (если привязан tg_user_id),
-        # иначе только этот IP.
-        user = get_user_by_ip(ip)
-        tg_user_id = user["tg_user_id"] if user else None
-
-        def _apply_to_account(field: str, value):
-            """Обновляет поле для всех устройств аккаунта или одного IP."""
-            if tg_user_id:
-                for d in get_devices_by_tg_id(tg_user_id):
-                    update_user_field(d["ip_address"], field, value)
-            else:
-                update_user_field(ip, field, value)
-
-        scope = f"tg_id={tg_user_id}" if tg_user_id else f"ip={ip}"
-
-        if days_str == "set28":
-            from datetime import datetime as _dt
-
-            now = _dt.now()
-            target_date = now.replace(day=28, hour=0, minute=0, second=0, microsecond=0)
-            if target_date < now:
-                import calendar
-
-                days_in_month = calendar.monthrange(now.year, now.month)[1]
-                target_date = target_date + __import__("datetime").timedelta(days=days_in_month)
-                target_date = target_date.replace(day=28)
-
-            iso = target_date.strftime("%Y-%m-%dT%H:%M:%S")
-            _apply_to_account("paid_until", iso)
-            log_audit("EXTEND", target_ip=ip, details=f"set28 -> {iso} ({scope})", admin_id=call.from_user.id)
-            bot.edit_message_text(
-                f"🗓 Дата оплаты установлена на **28 число** ({target_date.strftime('%d.%m.%Y')})!\n{scope}",
-                call.message.chat.id,
-                call.message.message_id,
-                parse_mode="Markdown",
-            )
-            return
-
-        if days_str == "reset":
-            _apply_to_account("paid_until", None)
-            log_audit("EXTEND", target_ip=ip, details=f"reset ({scope})", admin_id=call.from_user.id)
-            bot.edit_message_text(
-                f"🗑 Дата оплаты сброшена (отменена)!\n{scope}",
-                call.message.chat.id,
-                call.message.message_id,
-                parse_mode="Markdown",
-            )
-            return
-
-        if days_str == "lifetime":
-            _apply_to_account("paid_until", "2099-12-31")
-            log_audit("EXTEND", target_ip=ip, details=f"lifetime ({scope})", admin_id=call.from_user.id)
-            if tg_user_id:
-                try:
-                    bot.send_message(
-                        tg_user_id, "♾️ *Бессрочный доступ!*\nВаш VPN активирован бессрочно.", parse_mode="Markdown"
-                    )
-                except Exception:
-                    pass
-            bot.edit_message_text(
-                f"✅ Бессрочный доступ установлен!\n{scope}",
-                call.message.chat.id,
-                call.message.message_id,
-                parse_mode="Markdown",
-            )
-            return
-
-        days = int(days_str)
-        # Если есть tg_user_id — продлеваем подписку всего аккаунта (все устройства).
-        if tg_user_id:
-            new_date = extend_paid_until_for_tg(tg_user_id, days)
-        else:
-            new_date = extend_paid_until(ip, days)
-        from datetime import datetime as _dt
-
-        exp = _dt.fromisoformat(new_date)
-        log_audit("EXTEND", target_ip=ip, details=f"days={days} ({scope})", admin_id=call.from_user.id)
-
-        if tg_user_id:
-            try:
-                bot.send_message(
-                    tg_user_id,
-                    f"🎉 *Оплата подтверждена!*\n\nVPN продлён до *{exp.strftime('%d.%m.%Y')}*.",
-                    parse_mode="Markdown",
-                )
-            except Exception:
-                pass
-
-        bot.edit_message_text(
-            f"✅ Подписка продлена!\n{scope}\n+{days} дней\n📅 До: *{exp.strftime('%d.%m.%Y')}*",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="Markdown",
-        )
-
-    # ── Отвязать TG от профиля ────────────────────────────────────────────────
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("unbind|"))
-    @admin_only_callback
-    def cb_unbind(call):
-        ip = call.data.split("|")[1]
-        user = get_user_by_ip(ip)
-        if not user or not user["tg_user_id"]:
-            bot.answer_callback_query(call.id, "⚠️ TG и так не привязан.", show_alert=True)
-            return
-        tg_id = user["tg_user_id"]
-        update_user_field(ip, "tg_user_id", None)
-        log_audit("UNBIND", target_ip=ip, details=f"tg_id={tg_id}", admin_id=call.from_user.id)
-        bot.answer_callback_query(call.id, f"✅ TG ID {tg_id} отвязан!", show_alert=True)
-        bot.edit_message_text(
-            f"🔓 *TG отвязан*\n\nIP: `{ip}`\nTG ID был: `{tg_id}`\n\n"
-            f"Теперь клиент может быть привязан к другому аккаунту.",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="Markdown",
-        )
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("bind_pick|"))
-    @admin_only_callback
-    @rate_limit(5)
-    def cb_bind_pick(call):
-        """Отправляет нативную Telegram-кнопку выбора контакта."""
-        ip = call.data.split("|")[1]
-        _bind_pending[call.from_user.id] = ip
-        bot.answer_callback_query(call.id)
-
-        # Reply-keyboard с нативным picker-ом контактов
-        markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add(KeyboardButton("👤 Выбрать пользователя", request_user=KeyboardButtonRequestUser(request_id=1)))
-        markup.add(KeyboardButton("❌ Отмена"))
-
-        bot.send_message(
-            call.message.chat.id,
-            f"🔗 Выберите пользователя для IP `{ip}` из списка контактов:",
-            reply_markup=markup,
-            parse_mode="Markdown",
-        )
-
-    @bot.message_handler(content_types=["users_shared"])
-    @admin_only
-    def handle_user_shared(message):
-        """Получает TG ID выбранного контакта (Bot API 7.0+: users_shared)."""
-        ip = _bind_pending.pop(message.from_user.id, None)
-        if not ip:
-            return
-
-        try:
-            # Bot API 7.0+: message.users_shared.users — список
-            tg_id = message.users_shared.users[0].user_id
-        except Exception as e:
-            logger.error(f"Ошибка чтения users_shared: {e}")
-            bot.send_message(message.chat.id, "❌ Не удалось получить TG ID.", reply_markup=ReplyKeyboardRemove())
-            return
-        bind_tg_to_ip(ip, tg_id)
-        log_audit("BIND", target_ip=ip, details=f"tg_id={tg_id}", admin_id=message.from_user.id)
-
-        # Убираем reply-keyboard
-        bot.send_message(
-            message.chat.id,
-            f"✅ *Привязано!*\nIP `{ip}` → TG ID `{tg_id}`",
-            reply_markup=ReplyKeyboardRemove(),
-            parse_mode="Markdown",
-        )
-        # Уведомления клиенту отключены по просьбе администратора (тихая привязка)
-        # try:
-        #     bot.send_message(
-        #         tg_id,
-        #         "🎉 *Ваш VPN-профиль привязан!*\n"
-        #         "Напишите /start чтобы увидеть статус подписки.",
-        #         parse_mode="Markdown"
-        #     )
-        # except Exception as e:
-        #     logger.warning(f"Не удалось уведомить клиента {tg_id}: {e}")
-
-    @bot.message_handler(func=lambda m: m.text == "❌ Отмена" and m.from_user.id == cfg.admin_id)
-    def handle_bind_cancel(message):
-        _bind_pending.pop(message.from_user.id, None)
-        bot.send_message(message.chat.id, "❌ Привязка отменена.", reply_markup=ReplyKeyboardRemove())
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("set|"))
-    @admin_only_callback
-    def cb_set_speed(call):
-        _, ip, server_alias, speed = call.data.split("|")
-        if not validate_vpn_ip(ip):
-            return bot.answer_callback_query(call.id, "⛔ Невалидный IP!", show_alert=True)
-        if speed not in cfg.allowed_speeds:
-            return bot.answer_callback_query(call.id, "⛔ Невалидная скорость!", show_alert=True)
-        apply_limit(ip, speed, server_alias)
-        update_user_field(ip, "speed_limit", speed)
-        label = {"max": "Максимум", "punish": "💀 Карцер"}.get(speed, f"{speed} Мбит/с")
-        bot.edit_message_text(
-            f"✅ `{ip}` → *{label}*", call.message.chat.id, call.message.message_id, parse_mode="Markdown"
-        )
-        log_audit("SET_SPEED", ip, f"speed={speed}, server={server_alias}", call.from_user.id)
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("rename|"))
-    @admin_only_callback
-    def cb_rename(call):
-        ip = call.data.split("|")[1]
-        if not validate_vpn_ip(ip):
-            return bot.answer_callback_query(call.id, "⛔ Невалидный IP!", show_alert=True)
-        msg = bot.send_message(call.message.chat.id, f"✏️ Новое имя для `{ip}`:", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, _do_rename, ip)
-
-    def _do_rename(message, ip):
-        if message.from_user.id != cfg.admin_id:
-            return
-        clean = sanitize_alias(message.text)
-        update_user_field(ip, "alias", clean)
-        bot.reply_to(message, f"✅ Имя сохранено: *{clean}*", parse_mode="Markdown")
-        log_audit("RENAME", ip, f"alias={clean}", message.from_user.id)
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("del|"))
-    @admin_only_callback
-    def cb_del_confirm(call):
-        _, ip, server_alias = call.data.split("|")
-        if not validate_vpn_ip(ip):
-            return bot.answer_callback_query(call.id, "⛔ Невалидный IP!", show_alert=True)
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("⚠️ ДА, удалить!", callback_data=f"del_confirm|{ip}|{server_alias}"),
-            InlineKeyboardButton("Отмена", callback_data="page|0"),
-        )
-        bot.edit_message_text(
-            f"⚠️ *Удалить* `{ip}` с {server_alias}? Необратимо!",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=markup,
-            parse_mode="Markdown",
-        )
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("del_confirm|"))
-    @admin_only_callback
-    def cb_del_execute(call):
-        _, ip, server_alias = call.data.split("|")
-        if not validate_vpn_ip(ip):
-            return bot.answer_callback_query(call.id, "⛔ Невалидный IP!", show_alert=True)
-        delete_peer(ip, server_alias)
-        delete_user(ip)
-        bot.edit_message_text(f"🗑 `{ip}` удалён.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        log_audit("DELETE_PEER", ip, f"server={server_alias}", call.from_user.id)
-
-
-# ── Вспомогательные функции ───────────────────────────────────────────────────
-
-
-def _split(text: str, size: int = 4000):
-    chunks, cur = [], ""
-    for line in text.split("\n"):
-        if len(cur) + len(line) + 1 > size:
-            chunks.append(cur.strip())
-            cur = ""
-        cur += line + "\n"
-    if cur:
-        chunks.append(cur.strip())
-    return chunks
-
-
-def _send_users_page(bot, chat_id, page, message_id=None, flt="all"):
-    all_users = get_vpn_stats()
-    from datetime import datetime as _dt2
-
-    from database import get_all_users as _gu
-
-    _db = _gu()
-    now2 = _dt2.now()
-    if flt == "expired":
-
-        def _chk(u):
-            d = _db.get(u["ip"], {}).get("paid_until")
-            if not d:
-                return False
-            try:
-                e = _dt2.fromisoformat(d)
-                return e.year < 2099 and (e - now2).days < 0
-            except Exception:
-                return False
-
-        users = [u for u in all_users if _chk(u)]
-    elif flt == "expiring":
-
-        def _chk(u):
-            d = _db.get(u["ip"], {}).get("paid_until")
-            if not d:
-                return False
-            try:
-                e = _dt2.fromisoformat(d)
-                dl = (e - now2).days
-                return e.year < 2099 and 0 <= dl <= 7
-            except Exception:
-                return False
-
-        users = [u for u in all_users if _chk(u)]
-    elif flt == "unbound":
-        users = [u for u in all_users if not _db.get(u["ip"], {}).get("tg_user_id")]
-    else:
-        users = all_users
-    if not users:
-        txt = "❌ Нет активных пользователей."
-        if message_id:
-            bot.edit_message_text(txt, chat_id, message_id)
-        else:
-            bot.send_message(chat_id, txt)
-        return
-
-    per = cfg.users_per_page
-    total = (len(users) + per - 1) // per
-    page = max(0, min(page, total - 1))
-
-    markup = InlineKeyboardMarkup(row_width=1)
-    for u in users[page * per : (page + 1) * per]:
-        sp = "Макс" if u["speed_limit"] == "max" else f"{u['speed_limit']} Мб/с"
-        flag = "🇸🇪" if "SE" in u["server_alias"] else "🇷🇺"
-        markup.add(
-            InlineKeyboardButton(
-                f"{u['online_emoji']} {flag} {u['db_alias']} [{sp}]", callback_data=f"ip|{u['ip']}|{u['server_alias']}"
-            )
-        )
-
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"page|{page - 1}"))
-    nav.append(InlineKeyboardButton("🔄", callback_data=f"page|{page}"))
-    if page < total - 1:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"page|{page + 1}"))
-    markup.row(*nav)
-
-    txt = f"🎛 *Абоненты (стр. {page + 1}/{total})*\n🟢 онлайн  🟡 недавно  🔴 оффлайн"
-    try:
-        if message_id:
-            bot.edit_message_text(txt, chat_id, message_id, reply_markup=markup, parse_mode="Markdown")
-        else:
-            bot.send_message(chat_id, txt, reply_markup=markup, parse_mode="Markdown")
-    except Exception:
-        pass
-
-
-def _daily_analysis():
-    if not os.path.isfile(cfg.metrics_file):
-        return "❌ Нет данных."
-    try:
-        with open(cfg.metrics_file, encoding="utf-8") as f:
-            data = list(csv.reader(f))[1:][-288:]
-        if not data:
-            return "❌ Мало данных."
-        peak = max(data, key=lambda x: float(x[1]))
-        return f"📈 *Анализ SE за 24ч:*\n🔥 Пик: {peak[0]}\n🖥 CPU: {peak[1]}%\n💾 RAM: {peak[2]}%"
-    except Exception as e:
-        logger.error(f"Ошибка анализа: {e}")
-        return "❌ Ошибка чтения метрик."
-
-
-def _generate_chart():
-    if not os.path.isfile(cfg.metrics_file):
-        return None
-    try:
-        times, cpus, rams = [], [], []
-        with open(cfg.metrics_file, encoding="utf-8") as f:
-            for row in list(csv.reader(f))[1:][-288:]:
-                fmt = "%Y-%m-%d %H:%M:%S" if len(row[0]) > 16 else "%Y-%m-%d %H:%M"
-                times.append(datetime.strptime(row[0], fmt))
-                cpus.append(float(row[1]))
-                rams.append(float(row[2]))
-        plt.figure(figsize=(10, 5))
-        plt.plot(times, cpus, label="CPU (%)", color="green", marker="o", markersize=2)
-        plt.plot(times, rams, label="RAM (%)", color="blue", marker="s", markersize=2)
-        plt.title("Нагрузка SE (24ч)", fontsize=14)
-        plt.legend()
-        plt.grid(True, linestyle="--", alpha=0.7)
-        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=2))
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        plt.gcf().autofmt_xdate()
-        plt.tight_layout()
-        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        plt.savefig(tmp.name)
-        plt.close()
-        return tmp.name
-    except Exception as e:
-        logger.error(f"Ошибка графика: {e}")
-        return None
+                    logger.error(f"Рестарт RU: {e}")
+                    bot.edit_message_text("❌ Ошибка рестарта RU.", call.message.chat.id, call.message.message_id)

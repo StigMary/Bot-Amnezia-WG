@@ -11,7 +11,18 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-load_dotenv("/home/vpnuser/.env")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Загружаем .env: сначала из корня проекта, затем из домашней директории пользователя
+env_path = os.getenv("ENV_PATH", os.path.join(BASE_DIR, ".env"))
+if not os.path.exists(env_path):
+    user_env = os.path.expanduser("~/.env")
+    if os.path.exists(user_env):
+        env_path = user_env
+
+load_dotenv(env_path)
 
 
 def _require(key: str) -> str:
@@ -26,21 +37,23 @@ class Config:
     # --- Секреты ---
     token: str = field(default_factory=lambda: _require("BOT_TOKEN"))
     admin_id: int = field(default_factory=lambda: int(_require("ADMIN_ID")))
+    admin_api_key: str = field(default_factory=lambda: os.getenv("ADMIN_API_KEY", ""))
 
-    # --- Опциональные: второй (RF) сервер ---
-    rf_host: str = field(default_factory=lambda: os.getenv("RF_HOST", ""))
-    rf_ssh_port: str = field(default_factory=lambda: os.getenv("RF_SSH_PORT", "22"))
+    # --- Опциональные: второй (RU) сервер ---
+    ru_host: str = field(default_factory=lambda: os.getenv("RU_HOST", ""))
+    ru_ssh_port: str = field(default_factory=lambda: os.getenv("RU_SSH_PORT", "22"))
 
     # --- ID закрытой группы (для @group_member_only) ---
     group_chat_id: int = field(default_factory=lambda: int(os.getenv("GROUP_CHAT_ID", "0")))
 
-    # --- Пути к файлам (можно переопределить через .env) ---
-    db_file: str = field(default_factory=lambda: os.getenv("DB_FILE", "/home/vpnuser/vpn_bot/data/vpn_bot.db"))
+    # --- Пути к файлам (по умолчанию внутри data/ проекта) ---
+    data_dir: str = DATA_DIR
+    db_file: str = field(default_factory=lambda: os.getenv("DB_FILE", os.path.join(DATA_DIR, "vpn_bot.db")))
     metrics_file: str = field(
-        default_factory=lambda: os.getenv("METRICS_FILE", "/home/vpnuser/vpn_bot/data/metrics.csv")
+        default_factory=lambda: os.getenv("METRICS_FILE", os.path.join(DATA_DIR, "metrics.csv"))
     )
-    pid_file: str = field(default_factory=lambda: os.getenv("PID_FILE", "/home/vpnuser/vpn_bot/data/vpn_bot.pid"))
-    log_file: str = field(default_factory=lambda: os.getenv("LOG_FILE", "/home/vpnuser/vpn_bot/data/bot.log"))
+    pid_file: str = field(default_factory=lambda: os.getenv("PID_FILE", os.path.join(DATA_DIR, "vpn_bot.pid")))
+    log_file: str = field(default_factory=lambda: os.getenv("LOG_FILE", os.path.join(DATA_DIR, "bot.log")))
 
     # --- Расписание ---
     backup_time: str = "03:00"
@@ -71,31 +84,40 @@ class Config:
     def vpn_containers(self) -> list[dict[str, Any]]:
         """Список VPN-контейнеров. Настраивается через .env."""
         container1 = os.getenv("VPN_CONTAINER_1", "amnezia-awg2")
-        container2 = os.getenv("VPN_CONTAINER_2", "amnezia-awg")
-        container3 = os.getenv("VPN_CONTAINER_3", "amnezia-awg2")
-        return [
+        container2 = os.getenv("VPN_CONTAINER_2", "")
+        container3 = os.getenv("VPN_CONTAINER_3", "")
+        specs = [
             {
                 "name": container1,
                 "iface": "awg0",
-                "alias": os.getenv("VPN_ALIAS_1", "Server 1"),
+                "alias": os.getenv("VPN_ALIAS_1", "🇸🇪 SE Server (Main)"),
                 "host": "local",
                 "port": None,
             },
             {
                 "name": container2,
                 "iface": "awg0",
-                "alias": os.getenv("VPN_ALIAS_2", "Server 2"),
+                "alias": os.getenv("VPN_ALIAS_2", ""),
                 "host": "local",
                 "port": None,
             },
             {
                 "name": container3,
                 "iface": "awg0",
-                "alias": os.getenv("VPN_ALIAS_3", "Remote"),
-                "host": self.rf_host,
-                "port": self.rf_ssh_port,
+                "alias": os.getenv("VPN_ALIAS_3", "🇷🇺 RU Server (Node)"),
+                "host": self.ru_host,
+                "port": self.ru_ssh_port,
             },
         ]
+        seen = set()
+        result = []
+        for spec in specs:
+            key = (spec["host"], (spec["name"] or "").strip())
+            if not key[1] or key in seen:
+                continue
+            seen.add(key)
+            result.append(spec)
+        return result
 
 
 # Синглтон конфига

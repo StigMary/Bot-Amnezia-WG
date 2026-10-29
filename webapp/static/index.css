@@ -1,0 +1,715 @@
+/* index.css - Premium Glassmorphism Theme for VPN Admin Panel */
+
+:root {
+    /* Base Telegram Variables */
+    --bg-color: var(--tg-theme-bg-color, #121212);
+    --text-color: var(--tg-theme-text-color, #ffffff);
+    --hint-color: var(--tg-theme-hint-color, #a1a1a1);
+    --link-color: var(--tg-theme-link-color, #4ea4f5);
+    --button-color: var(--tg-theme-button-color, #007aff);
+    --button-text-color: var(--tg-theme-button-text-color, #ffffff);
+    
+    /* Custom Premium Variables */
+    --glass-bg: rgba(255, 255, 255, 0.06);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --header-bg-color: rgba(30, 30, 30, 0.85);
+    
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, #007aff 0%, #005bb5 100%);
+    --gradient-success: linear-gradient(135deg, #34c759 0%, #248a3d 100%);
+    --gradient-warning: linear-gradient(135deg, #ff9f0a 0%, #d17d00 100%);
+    --gradient-danger: linear-gradient(135deg, #ff3b30 0%, #bd251c 100%);
+    
+    /* Colors */
+    --success: #34c759;
+    --warning: #ff9f0a;
+    --danger: #ff3b30;
+    
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+html, body {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: var(--bg-color);
+    background-image: 
+        radial-gradient(circle at 15% 50%, rgba(0, 122, 255, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(52, 199, 89, 0.03), transparent 25%);
+    background-attachment: fixed;
+    color: var(--text-color);
+    -webkit-text-size-adjust: 100%;
+    -webkit-font-smoothing: antialiased;
+    touch-action: manipulation;
+}
+
+* { box-sizing: border-box; }
+h1, h2, h3, h4 { margin-top: 0; font-weight: 600; letter-spacing: -0.02em; }
+
+/* ----------------- Navigation Tab Bar ----------------- */
+.tab-bar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: calc(56px + env(safe-area-inset-bottom));
+    background: var(--header-bg-color);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    border-top: 1px solid var(--glass-border);
+    z-index: 100;
+    padding-bottom: env(safe-area-inset-bottom);
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.tab-bar .tab-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--hint-color);
+    background: none;
+    border: none;
+    font-size: 10px;
+    font-weight: 500;
+    gap: 3px;
+    flex: 1;
+    height: 100%;
+    cursor: pointer;
+    padding: 4px 0;
+    border-radius: 0;
+    box-shadow: none;
+    transition: color 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.tab-bar .tab-btn:active { transform: scale(0.92); }
+.tab-bar .tab-btn.active { color: var(--button-color); background: none; box-shadow: none; }
+.tab-bar .tab-btn svg {
+    width: 22px; height: 22px;
+    fill: currentColor;
+    transition: transform 0.2s ease;
+}
+.tab-bar .tab-btn.active svg { transform: translateY(-1px); }
+.tab-bar .tab-btn span {
+    font-size: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 58px;
+}
+
+/* ----------------- Pages ----------------- */
+.page {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px;
+    padding-bottom: 30px;
+    box-sizing: border-box;
+    animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.page.active { display: block; }
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ----------------- Glass Cards ----------------- */
+.card {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 16px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card:active.clickable {
+    transform: scale(0.98);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.card-header {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* ----------------- Dashboard Stats ----------------- */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.stat-box {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--glass-border);
+    padding: 14px;
+    border-radius: 12px;
+    text-align: center;
+    box-shadow: inset 0 1px 1px rgba(255,255,255,0.05);
+}
+.stat-value { font-size: 28px; font-weight: 700; color: var(--button-color); line-height: 1.1; }
+.stat-label { font-size: 13px; color: var(--hint-color); margin-top: 6px; font-weight: 500; }
+
+/* ----------------- Progress Bars ----------------- */
+.progress-container { margin-bottom: 12px; }
+.progress-label {
+    display: flex; justify-content: space-between;
+    font-size: 13px; margin-bottom: 6px; font-weight: 500;
+}
+.progress-bar {
+    height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.progress-fill {
+    height: 100%;
+    background: var(--button-color);
+    border-radius: 6px;
+    transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.4s ease;
+}
+
+/* ----------------- Search & Filters ----------------- */
+.search-container {
+    margin-bottom: 16px;
+    position: relative;
+}
+.search-input {
+    width: 100%;
+    padding: 12px 16px 12px 40px;
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    color: var(--text-color);
+    font-size: 15px;
+    backdrop-filter: blur(10px);
+    transition: border-color 0.3s ease;
+}
+.search-input:focus {
+    outline: none;
+    border-color: var(--button-color);
+    background: rgba(255,255,255,0.08);
+}
+.search-icon {
+    position: absolute;
+    left: 14px; top: 50%; transform: translateY(-50%);
+    color: var(--hint-color);
+    font-size: 16px; pointer-events: none;
+    z-index: 1;
+}
+
+.filter-tabs {
+    display: flex; gap: 6px; margin-bottom: 16px;
+    background: rgba(0,0,0,0.2);
+    padding: 4px; border-radius: 10px;
+}
+.filter-tab {
+    flex: 1; text-align: center; padding: 8px;
+    border-radius: 8px; cursor: pointer;
+    color: var(--hint-color); font-size: 13px; font-weight: 600;
+    transition: all 0.3s ease;
+}
+.filter-tab.active {
+    background: var(--glass-bg);
+    color: var(--text-color);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border: 1px solid var(--glass-border);
+}
+
+/* ----------------- Lists & List Items ----------------- */
+.list-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--glass-border);
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    border-radius: 8px;
+    margin-bottom: 2px;
+}
+.list-item:active { background: rgba(255,255,255,0.05); }
+.list-item:last-child { border-bottom: none; }
+.item-content { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.item-title { font-size: 16px; font-weight: 600; }
+.item-sub { font-size: 13px; color: var(--hint-color); }
+.item-badge {
+    background: rgba(255,255,255,0.1);
+    padding: 4px 10px; border-radius: 12px;
+    font-size: 12px; font-weight: 600;
+}
+.badge-warning { background: rgba(255,159,10,0.2); color: var(--warning); border: 1px solid rgba(255,159,10,0.3); }
+.badge-danger { background: rgba(255,59,48,0.2); color: var(--danger); border: 1px solid rgba(255,59,48,0.3); }
+
+/* Checkboxes for Bulk Action */
+.bulk-checkbox-container {
+    display: none; /* hidden by default */
+    padding-right: 12px;
+}
+.bulk-checkbox {
+    width: 22px; height: 22px;
+    accent-color: var(--button-color);
+    cursor: pointer;
+}
+.bulk-mode-active .bulk-checkbox-container { display: flex; align-items: center; }
+
+/* ----------------- Buttons ----------------- */
+.btn {
+    background: var(--gradient-primary);
+    color: #ffffff;
+    border: none;
+    padding: 12px 18px;
+    border-radius: 12px;
+    font-size: 15px; font-weight: 600;
+    cursor: pointer; width: 100%; margin-bottom: 10px;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.2);
+    transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+.btn:active { transform: scale(0.97); filter: brightness(0.9); box-shadow: 0 2px 6px rgba(0, 122, 255, 0.1); }
+.btn-outline {
+    background: transparent;
+    border: 1px solid var(--button-color);
+    color: var(--button-color);
+    box-shadow: none;
+}
+.btn-danger { background: var(--gradient-danger); box-shadow: 0 4px 12px rgba(255, 59, 48, 0.2); }
+.btn-warning { background: var(--gradient-warning); color: #000; box-shadow: 0 4px 12px rgba(255, 159, 10, 0.2); }
+.btn-secondary {
+    background: rgba(255,255,255,0.1);
+    color: var(--text-color);
+    box-shadow: none; border: 1px solid var(--glass-border);
+}
+
+.action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+
+/* ----------------- Modals (iOS Bottom Sheet Style) ----------------- */
+.modal-overlay {
+    display: none;
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    z-index: 200;
+    opacity: 0; transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+.modal-overlay.active { display: block; opacity: 1; pointer-events: auto; }
+
+.modal {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    width: 100%; max-width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-color);
+    border-top-left-radius: 24px; border-top-right-radius: 24px;
+    border-top: 1px solid var(--glass-border);
+    z-index: 210;
+    max-height: 88vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding: 24px 20px;
+    padding-bottom: calc(40px + env(safe-area-inset-bottom));
+    transform: translateY(105%);
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.35s;
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+}
+.modal.active {
+    transform: translateY(0);
+    visibility: visible;
+    pointer-events: auto;
+}
+.modal-drag-handle {
+    width: 40px; height: 5px;
+    background: var(--hint-color);
+    border-radius: 3px; margin: 0 auto 20px auto; opacity: 0.5;
+}
+
+.modal-close {
+    position: absolute; top: 20px; right: 20px;
+    background: rgba(255,255,255,0.1);
+    border: none; border-radius: 50%;
+    width: 32px; height: 32px;
+    color: var(--hint-color); font-size: 18px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+
+/* Inputs */
+.modal-input {
+    width: 100%; padding: 12px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--glass-border);
+    background: rgba(0,0,0,0.2);
+    color: var(--text-color); font-size: 16px !important;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+.modal-input:focus { outline: none; border-color: var(--button-color); }
+
+/* Bulk Actions Bar */
+.bulk-actions-bar {
+    display: none;
+    position: fixed; bottom: 65px; left: 0; right: 0;
+    background: var(--header-bg-color);
+    backdrop-filter: blur(20px);
+    padding: 12px 16px;
+    border-top: 1px solid var(--glass-border);
+    z-index: 99;
+    animation: slideUp 0.3s ease;
+}
+.bulk-actions-bar.active { display: flex; gap: 8px; }
+@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+/* Loading State */
+.loading { text-align: center; padding: 40px; color: var(--hint-color); font-weight: 500; font-size: 15px; }
+
+/* Dashboard Mini Charts Layout (Donut Rings) */
+.dashboard-metrics {
+    display: flex; gap: 12px; margin-bottom: 16px;
+}
+.metric-card {
+    flex: 1; background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 16px; padding: 12px;
+    display: flex; flex-direction: column; align-items: center;
+}
+.metric-ring {
+    position: relative; width: 50px; height: 50px; margin-bottom: 8px;
+}
+.metric-ring svg {
+    width: 50px; height: 50px; transform: rotate(-90deg);
+}
+.metric-ring circle {
+    fill: none; stroke-width: 4px; border-radius: 5px;
+}
+.metric-ring .bg { stroke: rgba(255, 255, 255, 0.05); }
+.metric-ring .fg {
+    stroke: var(--button-color); stroke-dasharray: 125; stroke-dashoffset: 125;
+    transition: stroke-dashoffset 0.5s ease-in-out, stroke 0.4s;
+    stroke-linecap: round;
+}
+.metric-ring-value {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700;
+}
+.metric-label { font-size: 11px; color: var(--hint-color); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+.metric-sub { font-size: 9px; color: var(--hint-color); opacity: 0.7; margin-top: 2px; }
+
+/* Traffic Neon Effect */
+.traffic-box {
+    background: rgba(0,0,0,0.2); border-radius: 12px; padding: 12px;
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 12px;
+}
+.traffic-item { display: flex; flex-direction: column; align-items: center; flex: 1; }
+.traffic-val { font-size: 14px; font-weight: 700; text-shadow: 0 0 8px rgba(255,255,255,0.2); }
+.traffic-val.rx { color: #2ed573; text-shadow: 0 0 10px rgba(46,213,115,0.4); }
+.traffic-val.tx { color: #1e90ff; text-shadow: 0 0 10px rgba(30,144,255,0.4); }
+
+/* Tickets (Support) */
+.ticket-card {
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 14px; padding: 14px; margin-bottom: 12px;
+    cursor: pointer; transition: transform 0.2s ease;
+}
+.ticket-card:active { transform: scale(0.98); }
+.ticket-card.unread { border-color: var(--button-color); box-shadow: 0 0 10px rgba(0,122,255,0.1); }
+.ticket-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.ticket-user { font-weight: 600; font-size: 15px; }
+.ticket-time { font-size: 12px; color: var(--hint-color); }
+.ticket-text { font-size: 14px; color: var(--text-color); opacity: 0.9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ticket-status { font-size: 10px; padding: 2px 6px; border-radius: 8px; font-weight: 600; text-transform: uppercase; }
+.ticket-status.open { background: rgba(0,122,255,0.15); color: var(--button-color); }
+.ticket-status.closed { background: rgba(255,255,255,0.1); color: var(--hint-color); }
+
+/* Chat Bubbles */
+.chat-bubble {
+    padding: 12px 14px; border-radius: 18px; margin-bottom: 12px;
+    max-width: 85%; font-size: 14px; line-height: 1.4;
+    position: relative; clear: both;
+}
+.chat-user {
+    background: rgba(255,255,255,0.1);
+    border-bottom-left-radius: 4px; float: left;
+}
+.chat-admin {
+    background: var(--button-color);
+    border-bottom-right-radius: 4px; float: right; color: #fff;
+}
+
+
+/* --- USER ADDED CSS (TERMINAL/GHOST) --- */
+:root {
+    /* Базовая палитра: глубокий графит и неоновые акценты */
+    --bg-dark: #0f1115;
+    --surface: #181a20;
+    --surface-hover: #1f222a;
+    --accent-cyan: #00F0FF;
+    --accent-green: #39FF14;
+    --accent-red: #FF3366;
+    --text-main: #E0E2E6;
+    --text-muted: #8A8D93;
+    --border-light: rgba(255, 255, 255, 0.08);
+    
+    /* Шрифты */
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'Roboto Mono', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', Roboto, sans-serif;
+}
+
+/* --- Карточка абонента в списке --- */
+.list-item {
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.list-item:active {
+    background: var(--surface-hover);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.item-content {
+    flex: 1;
+}
+
+.item-title {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    color: var(--text-main);
+    font-size: 15px;
+}
+
+/* Субтитры с IP и трафиком — моноширинные */
+.item-sub {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 4px;
+    letter-spacing: 0.2px;
+}
+
+/* --- Модальное окно (Glassmorphism) --- */
+.modal {
+    background: rgba(15, 17, 21, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+}
+
+/* Инженерный стиль для всех метрик (IP, трафик, скорость) */
+#modal-ip, .traffic-val, #modal-speed, #modal-paid {
+    font-family: var(--font-mono);
+    color: var(--text-main);
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}
+
+.metric-label {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 4px;
+}
+
+/* Блок трафика в стиле дашборда */
+.traffic-box {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+}
+
+.traffic-divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border-light);
+}
+
+/* --- Кнопки (Ghost & Outline) --- */
+.btn {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 8px;
+    padding: 10px;
+    transition: all 0.2s;
+    cursor: pointer;
+    text-align: center;
+    width: 100%;
+}
+
+/* Вторичные кнопки (переключение вкладок) */
+.btn-secondary {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid transparent !important;
+    color: var(--text-main) !important;
+}
+
+.btn-secondary:active {
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Кнопки действий (лимиты, продление) */
+.btn-outline {
+    background: transparent !important;
+    border: 1px solid var(--border-light) !important;
+    color: var(--text-main) !important;
+}
+
+.btn-outline:active {
+    border-color: var(--accent-cyan) !important;
+    color: var(--accent-cyan) !important;
+    background: rgba(0, 240, 255, 0.05) !important;
+}
+
+/* Опасные действия */
+.btn-danger {
+    background: transparent !important;
+    border: 1px solid rgba(255, 51, 102, 0.3) !important;
+    color: var(--accent-red) !important;
+}
+
+.btn-danger:active {
+    background: rgba(255, 51, 102, 0.1) !important;
+}
+
+/* Поле ввода даты */
+.modal-input {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-light);
+    color: var(--text-main);
+    border-radius: 8px;
+    font-family: var(--font-mono);
+}
+
+/* --- Формы и инпуты --- */
+.form-control {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-light);
+    color: var(--text-main);
+    font-family: var(--font-sans);
+    font-size: 16px !important;
+    padding: 12px;
+    border-radius: 8px;
+    width: 100%;
+    box-sizing: border-box;
+    transition: all 0.2s ease;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.2);
+}
+
+.form-control::placeholder {
+    color: rgba(255, 255, 255, 0.2);
+}
+
+.form-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    display: block;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* --- Главная кнопка действия (Primary) --- */
+.btn-primary {
+    background: var(--button-color) !important;
+    color: #ffffff !important;
+    border: none !important;
+    font-weight: 600 !important;
+}
+
+.btn-primary:active {
+    opacity: 0.8;
+    transform: translateY(1px);
+}
+
+/* --- Переключатели вкладок (для Тикетов) --- */
+.tabs-wrapper {
+    display: flex;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 16px;
+}
+
+.tabs-wrapper .tab-btn {
+    flex: 1;
+    padding: 8px 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    border-radius: 8px;
+    transition: all 0.2s;
+    cursor: pointer;
+    font-weight: 500;
+    background: none;
+    border: none;
+    height: auto;
+}
+
+.tabs-wrapper .tab-btn.active {
+    background: var(--surface-hover);
+    color: var(--text-main);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+/* Пустое состояние (Empty state) */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+}
+
+/* RU Monitor — строка клиента */
+.ru-client-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 4px;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 13px;
+}
+.ru-client-row:last-child {
+    border-bottom: none;
+}
+.ru-client-name {
+    font-weight: 500;
+    color: var(--text-main);
+    flex-shrink: 0;
+}
+
+\n\n/* Ticket modal height */\n#ticket-modal { min-height: 85vh !important; max-height: 85vh !important; }\n

@@ -1,0 +1,2313 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>KJZNNETx Admin Panel</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="/static/chart.js?v=19"></script>
+    <link rel="stylesheet" href="/static/index.css?v=19">
+</head>
+<body>
+    <div class="modal-overlay" id="modal-overlay" onclick="closeAllModals()"></div>
+
+    <!-- Dashboard -->
+    <div id="page-dashboard" class="page active">
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 16px;">
+            <h2 style="margin: 0;">Дашборд</h2>
+            <span style="font-size: 11px; color: var(--hint-color); opacity: 0.8; font-weight: 500;">by Kjznnet</span>
+        </div>
+        
+        <div class="stat-grid" style="margin-bottom: 16px;" id="dash-summary">
+            <div class="stat-box"><div class="stat-value">-</div><div class="stat-label">Онлайн</div></div>
+            <div class="stat-box"><div class="stat-value">-</div><div class="stat-label">Всего</div></div>
+        </div>
+
+        <div class="card" onclick="openServerModal('SE')" style="cursor: pointer;">
+            <div class="card-header">🇸🇪 SE Server (Main) <span id="se-uptime" style="font-weight:normal; font-size:12px; color:var(--hint-color)"></span></div>
+            <div id="se-stats">
+                <div class="loading">Загрузка...</div>
+            </div>
+            <div style="margin-top: 8px; font-size: 13px; color: var(--hint-color);" id="se-speed">⬇️ 0.00 Мбит/с | ⬆️ 0.00 Мбит/с</div>
+        </div>
+
+        <div class="card" onclick="openServerModal('RU')" style="cursor: pointer;">
+            <div class="card-header">🇷🇺 RU Server (Node) <span id="ru-uptime" style="font-weight:normal; font-size:12px; color:var(--hint-color)"></span></div>
+            <div id="ru-stats">
+                <div class="loading">Загрузка...</div>
+            </div>
+            <div style="margin-top: 8px; font-size: 13px; color: var(--hint-color);" id="ru-speed">⬇️ 0.00 Мбит/с | ⬆️ 0.00 Мбит/с</div>
+            <div id="ru-xray-row" style="margin-top: 8px; font-size: 12px; display:none;"></div>
+        </div>
+    </div>
+
+    <!-- Chart Modal -->
+    <div id="chart-modal" class="modal" style="z-index: 300;">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeChartModal()">×</button>
+            <h2 id="chart-title">График нагрузки</h2>
+            <div class="tabs-wrapper" style="margin-top: 12px; margin-bottom: 0;">
+                <div id="chart-tab-system" class="tab-btn active" onclick="switchChartTab('system')">💻 Система</div>
+                <div id="chart-tab-network" class="tab-btn" onclick="switchChartTab('network')">🌐 Сеть</div>
+            </div>
+            <div style="position: relative; height:300px; width:100%; margin-top:15px;">
+                <canvas id="loadChart"></canvas>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-top:20px;">
+                <button class="btn btn-secondary" onclick="closeChartModal()" style="flex:1;">Закрыть график</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Users List -->
+    <div id="page-users" class="page">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h2 style="margin:0;">Абоненты</h2>
+            <div>
+                <button class="btn btn-primary" style="width:auto; padding:6px 12px; margin:0; margin-right: 8px;" onclick="openCreateUserModal()">➕ Новый</button>
+                <button class="btn btn-outline" style="width:auto; padding:6px 12px; margin:0;" onclick="toggleBulkMode()" id="bulk-btn">Выбрать</button>
+            </div>
+        </div>
+
+        <div class="search-container">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="search-input" class="search-input" placeholder="Поиск по имени, IP или TG ID..." oninput="renderUsersList()">
+        </div>
+        
+        <div class="filter-tabs" style="overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; padding-bottom: 4px;">
+            <div class="filter-tab active" onclick="setFilter('all', this)">🌍 Все</div>
+            <div class="filter-tab" onclick="setFilter('online', this)">🟢 Онлайн</div>
+            <div class="filter-tab" onclick="setFilter('expired', this)">🔴 Должники</div>
+            <div class="filter-tab" onclick="setFilter('SE', this)">🇸🇪 SE</div>
+            <div class="filter-tab" onclick="setFilter('RU', this)">🇷🇺 RU</div>
+        </div>
+
+        <div id="users-list">
+            <div class="loading">Загрузка...</div>
+        </div>
+    </div>
+
+    <!-- User Modal -->
+    <div id="user-modal" class="modal">
+        <button class="modal-close" onclick="closeUserModal()">×</button>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom: 4px;">
+            <h2 id="modal-title" style="margin:0;">Пользователь</h2>
+            <button onclick="startRename()" title="Переименовать"
+                style="background:transparent; border:none; cursor:pointer; font-size:16px; padding:2px 6px; line-height:1; opacity:.7;">✏️</button>
+        </div>
+        <div id="user-rename-panel" style="display:none; margin: 8px 0 4px;">
+            <div style="display:flex; gap:8px; align-items:center;">
+                <input type="text" id="rename-input" class="modal-input" maxlength="30"
+                    style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--hint-color); background:var(--secondary-bg-color); color:var(--text-color);"
+                    placeholder="Имя абонента"
+                    onkeydown="if(event.key==='Enter'){event.preventDefault(); saveRename();} else if(event.key==='Escape'){cancelRename();}">
+                <button class="btn btn-secondary" style="width:auto; padding:10px 14px;" onclick="saveRename()">✓</button>
+                <button class="btn btn-outline" style="width:auto; padding:10px 14px;" onclick="cancelRename()">✕</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">Оставьте пустым — будет «Новый пользователь». Enter — сохранить, Esc — отмена.</div>
+        </div>
+        <div id="modal-server" style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">Сервер: -</div>
+        
+        <div class="card" style="padding: 16px;">
+            <div class="dashboard-metrics" style="margin-bottom: 16px; display: flex; justify-content: space-between;">
+                <div class="metric-card" style="border: none; background: transparent; padding: 0; text-align: left;">
+                    <div id="modal-online" style="font-size: 24px; margin-bottom: 2px;">-</div>
+                    <div class="metric-label">Статус</div>
+                </div>
+                <div class="metric-card" style="border: none; background: transparent; padding: 0; text-align: right;">
+                    <div id="modal-ip" style="font-size: 15px;">-</div>
+                    <div id="modal-real-ip" style="font-size:10px; color:var(--hint-color); margin-top:1px;"></div>
+                    <div class="metric-label">IP АДРЕС</div>
+                </div>
+            </div>
+            
+            <div class="traffic-box" style="padding: 12px; margin-bottom: 16px;">
+                <div class="traffic-item" style="text-align: center;">
+                    <div id="modal-traffic-rx" class="traffic-val rx" style="font-size: 15px;">0 MB</div>
+                    <div class="metric-label">Трафик ↓</div>
+                </div>
+                <div class="traffic-divider"></div>
+                <div class="traffic-item" style="text-align: center;">
+                    <div id="modal-traffic-tx" class="traffic-val tx" style="font-size: 15px;">0 MB</div>
+                    <div class="metric-label">Трафик ↑</div>
+                </div>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items: center; border-top: 1px solid var(--border-light); padding-top: 12px;">
+                <div style="font-size: 13px; color: var(--text-muted);">⚡ Скорость: <span id="modal-speed">Max</span></div>
+                <div style="font-size: 13px; color: var(--text-muted);">📅 Оплата: <span id="modal-paid">Безлимит</span></div>
+            </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px; margin: 16px 0;">
+            <button class="btn btn-secondary" onclick="document.getElementById('user-speed-panel').style.display='block'; document.getElementById('user-pay-panel').style.display='none';">⚡ Настроить скорость</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('user-pay-panel').style.display='block'; document.getElementById('user-speed-panel').style.display='none';">📅 Управление подпиской</button>
+            
+            <button class="btn btn-secondary" style="border-color: rgba(0, 210, 255, 0.4); color: var(--accent-cyan);" onclick="openUserConfigModal()">📄 Конфиг (.conf)</button>
+            <button class="btn btn-secondary" onclick="toggleBindPanel()">🔗 Привязать / Объединить с абонентом</button>
+            <div id="user-bind-panel" class="card" style="display: none; padding: 16px; margin-top: 8px;">
+                <h4 style="margin-bottom: 12px; color: var(--text-main); font-weight: 500;">Привязка к Telegram абоненту</h4>
+                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
+                    Объедините этот конфиг с уже существующим пользователем (например, второе устройство) или укажите TG ID вручную.
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Выбрать существующего абонента:</label>
+                    <select id="bind-target-user-select" class="modal-input" style="width: 100%; padding: 8px; border-radius: 8px;">
+                        <option value="">-- Выберите абонента --</option>
+                    </select>
+                </div>
+                
+                <div style="text-align: center; font-size: 11px; color: var(--text-muted); margin: 6px 0;">— ИЛИ ввести TG ID напрямую —</div>
+                
+                <div style="margin-bottom: 12px;">
+                    <input type="number" id="bind-custom-tg-id" class="modal-input" placeholder="Telegram ID (например, 1140286444)" style="width: 100%; padding: 8px; border-radius: 8px;">
+                </div>
+                
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-secondary" style="flex: 1;" onclick="applyUserBind()">✓ Сохранить привязку</button>
+                    <button id="btn-unbind-tg" class="btn btn-danger" style="width: auto; padding: 8px 12px; display: none;" onclick="applyUserUnbind()">🔓 Отвязать</button>
+                </div>
+            </div>
+
+            <button class="btn btn-danger" onclick="deleteUser()">Удалить абонента</button>
+        </div>
+
+        <div id="user-speed-panel" class="card" style="display: none; padding: 16px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-main); font-weight: 500;">Лимит скорости</h4>
+            <div class="action-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                <button class="btn btn-outline" onclick="setSpeed('10')">10 Мбит</button>
+                <button class="btn btn-outline" onclick="setSpeed('30')">30 Мбит</button>
+                <button class="btn btn-outline" onclick="setSpeed('50')">50 Мбит</button>
+                <button class="btn btn-outline" onclick="setSpeed('100')">100 Мбит</button>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn btn-outline" style="border-color: rgba(255, 51, 102, 0.3); color: var(--accent-red);" onclick="setSpeed('punish')">💀 Карцер</button>
+                <button class="btn btn-outline" style="border-color: rgba(57, 255, 20, 0.3); color: var(--accent-green);" onclick="setSpeed('max')">🔥 Снять</button>
+            </div>
+        </div>
+
+        <div id="user-pay-panel" class="card" style="display: none; padding: 16px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-main); font-weight: 500;">Продление подписки</h4>
+            <div class="action-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                <button class="btn btn-outline" onclick="extendUser(30)">+1 Мес</button>
+                <button class="btn btn-outline" onclick="extendUser(90)">+3 Мес</button>
+                <button class="btn btn-outline" onclick="extendUser(180)">+6 Мес</button>
+                <button class="btn btn-outline" onclick="extendUser(365)">+1 Год</button>
+            </div>
+            <button class="btn btn-outline" style="margin-bottom: 12px;" onclick="extendUser(0, true)">♾️ Бессрочно</button>
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                <input type="date" id="custom-date-input" class="modal-input" style="flex: 1; padding: 10px;">
+                <button class="btn btn-secondary" style="width: auto; padding: 10px 20px;" onclick="setCustomDate()">Ок</button>
+            </div>
+            <button class="btn btn-danger" onclick="resetSubscription()">Сбросить оплату</button>
+        </div>
+    </div>
+
+    <!-- Server Modal -->
+    <div id="server-modal" class="modal">
+        <button class="modal-close" onclick="closeServerModal()">×</button>
+        <div style="margin-top: 24px;">
+            <h3 id="server-modal-title" style="margin-bottom: 16px;">Сервер</h3>
+            <div id="server-actions" class="action-grid" style="grid-template-columns: 1fr;">
+                <!-- Actions injected via JS -->
+            </div>
+            
+            <div id="server-services-box" style="margin-top: 18px; text-align:left;">
+                <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-main); display:flex; justify-content:space-between; align-items:center;">
+                    <span>📦 Службы и контейнеры</span>
+                    <span onclick="fetchServerServices(currentServerSide)" style="color:var(--accent); font-size:12px; cursor:pointer;">🔄 Обновить</span>
+                </div>
+                <div id="server-services-list" style="display:flex; flex-direction:column; gap:8px;">
+                    <div class="loading" style="font-size:12px;">Загрузка служб...</div>
+                </div>
+            </div>
+            <!-- RU Activity Tab (only shown for RU) -->
+            <div id="ru-activity-section" style="display:none; margin-top: 20px;">
+                <div style="height:1px; background:var(--border-light); margin-bottom:16px;"></div>
+                <div class="tabs-wrapper" style="margin-bottom:12px;">
+                    <div class="tab-btn active" id="ru-tab-top" onclick="switchRuTab('top')">🏆 Топ</div>
+                    <div class="tab-btn" id="ru-tab-now" onclick="switchRuTab('now')">🟢 Сейчас</div>
+                    <div class="tab-btn" id="ru-tab-events" onclick="switchRuTab('events')">⚡ Xray</div>
+                </div>
+                <div id="ru-tab-content">
+                    <div class="loading">Загрузка...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Log -->
+    <div id="page-audit" class="page">
+        <h2>Журнал</h2>
+        <div class="card" style="padding: 0 16px;">
+            <div id="audit-list">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Page -->
+    <div id="page-settings" class="page">
+        <h2 class="page-title" style="margin-bottom: 16px; font-weight: 600; color: var(--text-main);">Настройки</h2>
+        
+        <div class="card" style="padding: 16px; margin-bottom: 16px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-main); font-weight: 500;">Пороги аномалий</h4>
+            
+            <div style="margin-bottom: 12px;">
+                <label class="form-label">CPU Порог (%)</label>
+                <input type="number" id="set-cpu" class="form-control" value="90" style="font-family: var(--font-mono); font-size: 16px;">
+            </div>
+            
+            <div style="margin-bottom: 16px;">
+                <label class="form-label">RAM Порог (%)</label>
+                <input type="number" id="set-ram" class="form-control" value="85" style="font-family: var(--font-mono); font-size: 16px;">
+            </div>
+
+            <div style="height: 1px; background: var(--border-light); margin: 20px 0;"></div>
+
+            <h4 style="margin-bottom: 16px; color: var(--text-main); font-weight: 500;">Биллинг</h4>
+
+            <div style="margin-bottom: 12px;">
+                <label class="form-label">Дни для предупреждения</label>
+                <input type="number" id="set-warn" class="form-control" value="3" style="font-family: var(--font-mono); font-size: 16px;">
+            </div>
+            
+            <div style="margin-bottom: 16px;">
+                <label class="form-label">Дни для критического алерта</label>
+                <input type="number" id="set-crit" class="form-control" value="1" style="font-family: var(--font-mono); font-size: 16px;">
+            </div>
+
+            <button class="btn btn-primary" style="margin-top: 8px;" onclick="saveSettings()">
+                Сохранить настройки
+            </button>
+        </div>
+
+        <h4 style="margin-bottom: 12px; color: var(--text-muted); font-weight: 500; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; padding: 0 4px;">Данные и Бэкапы</h4>
+        
+        <div class="action-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <button class="btn btn-secondary" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px;" onclick="downloadCsv()">
+                <span style="font-size: 20px;">📊</span>
+                <span>Скачать CSV</span>
+            </button>
+            <button class="btn btn-secondary" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px;" onclick="downloadBackup()">
+                <span style="font-size: 20px;">💾</span>
+                <span>Бэкап БД (.db)</span>
+            </button>
+        </div>
+    </div>
+
+
+    <!-- Waiting Room Page -->
+    <div id="page-waiting" class="page">
+        <h2 class="page-title" style="margin-bottom: 16px; font-weight: 600; color: var(--text-main);">🚪 Зал ожидания</h2>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">Новые пиры WireGuard, ещё не зарегистрированные как клиенты.</p>
+        <div id="waiting-list">
+            <div class="loading">Загрузка...</div>
+        </div>
+    </div>
+
+    <!-- Broadcast Page -->
+    <div id="page-broadcast" class="page">
+        <h2 class="page-title" style="margin-bottom: 16px; font-weight: 600; color: var(--text-main);">Рассылка</h2>
+        
+        <div class="card" style="padding: 16px;">
+            <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px; line-height: 1.4;">
+                Отправить системное сообщение всем активным устройствам в Telegram.
+            </p>
+            
+            <textarea id="broadcast-text" class="form-control" style="resize: vertical; min-height: 140px; margin-bottom: 16px;" placeholder="Введите текст сообщения..."></textarea>
+            
+            <button class="btn btn-primary" onclick="sendBroadcast()">
+                📢 Отправить всем
+            </button>
+        </div>
+    </div>
+
+    <!-- Bulk Actions Bar -->
+    <div id="bulk-actions-bar" class="bulk-actions-bar">
+        <button class="btn btn-warning" style="margin:0; flex:1;" onclick="bulkExtend(30)">+30 Дней</button>
+        <button class="btn btn-secondary" style="margin:0; flex:1; background: var(--button-color); color: #fff; border:none;" onclick="openBulkMessageModal()">✉️ Написать</button>
+        <button class="btn btn-danger" style="margin:0; flex:1;" onclick="bulkDelete()">Удалить</button>
+    </div>
+
+    <!-- Bulk Message Modal -->
+    <div id="bulk-msg-modal" class="modal" style="z-index: 250;">
+        <button class="modal-close" onclick="closeAllModals()">×</button>
+        <h2>Сообщение выбранным</h2>
+        <div class="card" style="margin-top: 16px;">
+            <p style="color: var(--hint-color); font-size: 13px; margin-bottom: 12px;">Текст получат только выбранные абоненты.</p>
+            <textarea id="bulk-msg-text" class="modal-input" style="width: 100%; height: 100px; margin-bottom: 16px;" placeholder="Введите текст..."></textarea>
+            <button class="btn" style="background-color: var(--button-color);" onclick="sendBulkMessage()">Отправить</button>
+        </div>
+    </div>
+
+    <!-- Register Modal -->
+    <div id="register-modal" class="modal" style="z-index: 250;">
+        <button class="modal-close" onclick="closeRegisterModal()">×</button>
+        <h2>Регистрация</h2>
+        <div class="card" style="margin-top: 16px;">
+            <div style="margin-bottom: 12px;">
+                <label style="color: var(--hint-color); font-size: 13px;">IP адрес</label>
+                <div id="reg-ip" style="font-family: monospace; font-size: 16px; margin-top: 4px;">-</div>
+            </div>
+            <div style="margin-bottom: 12px;">
+                <label style="color: var(--hint-color); font-size: 13px;">Имя / Алиас</label>
+                <input type="text" id="reg-alias" class="modal-input" style="width: 100%; margin-top: 4px; padding: 8px; border-radius: 8px; border: 1px solid var(--hint-color); background: var(--secondary-bg-color); color: var(--text-color);" placeholder="Иван Иванов">
+            </div>
+            <div style="margin-bottom: 12px;">
+                <label style="color: var(--hint-color); font-size: 13px;">Telegram ID (опционально)</label>
+                <input type="number" id="reg-tg" class="modal-input" style="width: 100%; margin-top: 4px; padding: 8px; border-radius: 8px; border: 1px solid var(--hint-color); background: var(--secondary-bg-color); color: var(--text-color);" placeholder="123456789">
+            </div>
+            <div style="margin-bottom: 24px;">
+                <label style="color: var(--hint-color); font-size: 13px;">Дней оплаты</label>
+                <input type="number" id="reg-days" class="modal-input" style="width: 100%; margin-top: 4px; padding: 8px; border-radius: 8px; border: 1px solid var(--hint-color); background: var(--secondary-bg-color); color: var(--text-color);" value="30">
+            </div>
+            <button class="btn" style="background-color: var(--success);" onclick="submitRegistration()">✔️ Зарегистрировать</button>
+        </div>
+    </div>
+
+    <!-- Tickets Page -->
+    <div id="page-tickets" class="page">
+        <h2 class="page-title" style="margin-bottom: 16px; font-weight: 600; color: var(--text-main);">Поддержка</h2>
+        
+        <div class="tabs-wrapper">
+            <div class="tab-btn active" onclick="setTicketFilter('open', this)">🟢 Открытые</div>
+            <div class="tab-btn" onclick="setTicketFilter('closed', this)">⚪ Закрытые</div>
+        </div>
+
+        <div id="tickets-list" class="empty-state">
+            <div style="font-size: 32px; margin-bottom: 12px; opacity: 0.5;">📭</div>
+            <div style="font-size: 14px;">Нет тикетов.</div>
+            <div style="font-size: 12px; opacity: 0.5; margin-top: 4px;">Все запросы обработаны</div>
+        </div>
+    </div>
+
+    <!-- Ticket Dialog Modal -->
+    <div id="ticket-modal" class="modal">
+        <button class="modal-close" onclick="closeTicketModal()">×</button>
+        <div style="display:flex; justify-content:flex-start; align-items:center; margin-bottom: 16px; gap: 12px; padding-right: 40px;">
+            <h3 id="ticket-modal-title" style="margin:0;">Тикет #123</h3>
+            <div id="ticket-modal-status" class="ticket-status open">Открыт</div>
+        </div>
+        
+        <div id="ticket-chat" style="margin-bottom: 16px; padding-bottom: 10px; max-height: 40vh; overflow-y: auto;">
+            <!-- chat history injected here -->
+        </div>
+        
+        <div id="ticket-controls">
+            <!-- controls injected here -->
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchPage('dashboard', this)">
+            <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+            <span style="font-size: 9px;">Дашборд</span>
+        </button>
+        <button class="tab-btn" onclick="switchPage('users', this)">
+            <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+            <span style="font-size: 9px;">Абоненты</span>
+        </button>
+        <button class="tab-btn" onclick="switchPage('tickets', this)">
+            <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM8 14H6v-2h2v2zm0-4H6V8h2v2zm4 4h-2v-2h2v2zm0-4h-2V8h2v2zm4 4h-2v-2h2v2zm0-4h-2V8h2v2z"/></svg>
+            <span style="font-size: 9px;">Тикеты</span>
+        </button>
+        <button class="tab-btn" onclick="switchPage('waiting', this)">
+            <svg viewBox="0 0 24 24"><path d="M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6zm10 14.5V20H8v-3.5l4-4 4 4zm-4-5l-4-4V4h8v3.5l-4 4z"/></svg>
+            <span style="font-size: 9px;">Зал</span>
+        </button>
+        <button class="tab-btn" onclick="switchPage('broadcast', this)">
+            <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM4 16V4h16v12H4z"/></svg>
+            <span style="font-size: 9px;">Рассылка</span>
+        </button>
+        <button class="tab-btn" onclick="switchPage('settings', this)">
+            <svg viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
+            <span style="font-size: 9px;">Настройки</span>
+        </button>
+    </div>
+
+    
+    <!-- Create User Modal -->
+    <div id="create-user-modal" class="modal">
+        <div class="modal-content">
+            <h3>Создать абонента</h3>
+            
+            <label style="display:block; margin-top:15px; margin-bottom:5px; color:var(--text-muted);">Имя (Alias)</label>
+            <input type="text" id="create-user-alias" class="form-control" placeholder="Например: Ivan iPhone">
+            
+            <label style="display:block; margin-top:15px; margin-bottom:5px; color:var(--text-muted);">Сервер</label>
+            <select id="create-user-server" class="form-control" style="background:var(--surface); color:white;">
+                <option value="">Загрузка...</option>
+            </select>
+            
+            <div style="display:flex; justify-content:space-between; margin-top:20px; gap: 10px;">
+                <button class="btn btn-secondary" onclick="closeCreateUserModal()" style="flex:1;">Отмена</button>
+                <button class="btn btn-primary" onclick="submitCreateUser()" style="flex:1;">Создать</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Success Modal -->
+    <div id="create-success-modal" class="modal" style="z-index: 300;">
+        <div class="modal-content">
+            <div style="text-align:center; margin-bottom:16px;">
+                <div style="font-size:48px; margin-bottom:8px;">✅</div>
+                <h3 style="color:var(--accent-green); margin:0;">Профиль создан!</h3>
+            </div>
+            <div id="create-success-user-info" style="text-align:center; color:var(--text-muted); font-size:13px; margin-bottom:16px; padding:8px; background:var(--surface); border-radius:8px;"></div>
+            <p style="color:var(--text-muted); font-size:13px; margin-bottom:12px;">Скопируйте ссылку и отправьте пользователю. При нажатии она откроет приложение Amnezia VPN.</p>
+            
+            <div class="tabs-wrapper" style="margin-bottom:12px;">
+                <div class="tab-btn active" id="success-tab-conf" onclick="switchSuccessTab('conf')">📄 Текст .conf</div>
+                <div class="tab-btn" id="success-tab-vpn" onclick="switchSuccessTab('vpn')">🔗 Ключ vpn://</div>
+            </div>
+
+            <div id="success-view-conf">
+                <textarea id="create-success-conf" class="form-control" rows="6" readonly style="font-family:monospace; font-size:11px; margin-bottom: 12px; line-height:1.3; background:var(--surface);"></textarea>
+                <div style="display:flex; gap:8px; margin-bottom:12px;">
+                    <button class="btn btn-primary" id="btn-copy-create-conf" onclick="copyCreateConfText()" style="flex:1; margin:0;">📋 Скопировать .conf</button>
+                    <button class="btn btn-secondary" onclick="downloadCreatedConfigFile()" style="flex:1; margin:0;">💾 Скачать .conf</button>
+                </div>
+            </div>
+
+            <div id="success-view-vpn" style="display:none;">
+                <textarea id="create-success-link" class="form-control" rows="3" readonly style="font-family:monospace; font-size:11px; margin-bottom: 12px; word-break: break-all; opacity:0.7;"></textarea>
+                <button class="btn" onclick="copyCreateLink()" style="width:100%; background:var(--accent); margin-bottom:12px;">📋 Скопировать vpn://</button>
+            </div>
+            
+            <button class="btn btn-outline" onclick="closeSuccessModal()" style="width:100%;">Закрыть</button>
+        </div>
+    </div>
+
+    <!-- Config Modal -->
+    <div id="config-modal" class="modal" style="z-index: 320;">
+        <button class="modal-close" onclick="closeConfigModal()">×</button>
+        <h3 id="config-modal-title" style="margin-top: 10px; margin-bottom: 12px;">📄 Конфиг абонента</h3>
+        <div id="config-loading" class="loading" style="display:none; margin: 24px 0;">Считывание параметров сервера...</div>
+        
+        <div id="config-content" style="display:none; margin-top: 10px;">
+            <div class="tabs-wrapper" style="margin-bottom:12px;">
+                <div class="tab-btn active" id="config-tab-conf" onclick="switchConfigTab('conf')">📄 Текст .conf</div>
+                <div class="tab-btn" id="config-tab-vpn" onclick="switchConfigTab('vpn')">🔗 Ключ vpn://</div>
+                <div class="tab-btn" id="config-tab-qr" onclick="switchConfigTab('qr')">📱 QR-код</div>
+            </div>
+
+            <div id="config-view-conf">
+                <textarea id="config-text" class="modal-input" readonly
+                    style="width: 100%; height: 180px; font-family: monospace; font-size: 11px; line-height: 1.4; padding: 10px; border-radius: 8px; border: 1px solid var(--border-light); background: var(--surface); color: var(--text-main); resize: vertical; margin-bottom: 12px;"></textarea>
+                
+                <div style="display: flex; gap: 6px; margin-bottom: 12px;">
+                    <button class="btn btn-primary" id="btn-copy-conf" onclick="copyConfigText()" style="flex: 1; margin: 0; padding: 10px 4px; font-size: 12px;">
+                        📋 Скопировать
+                    </button>
+                    <button class="btn btn-secondary" id="btn-share-conf" onclick="shareConfigFile()" style="flex: 1; margin: 0; padding: 10px 4px; font-size: 12px;">
+                        📤 Поделиться
+                    </button>
+                    <button class="btn btn-secondary" onclick="downloadConfigFile()" style="flex: 1; margin: 0; padding: 10px 4px; font-size: 12px;">
+                        💾 Скачать
+                    </button>
+                </div>
+            </div>
+
+            <div id="config-view-vpn" style="display:none;">
+                <textarea id="config-vpn-text" class="modal-input" readonly
+                    style="width: 100%; height: 120px; font-family: monospace; font-size: 11px; line-height: 1.3; padding: 10px; border-radius: 8px; border: 1px solid var(--border-light); background: var(--surface); color: var(--text-main); resize: vertical; margin-bottom: 12px; word-break: break-all;"></textarea>
+                <button class="btn" id="btn-copy-vpn" onclick="copyConfigVpnText()" style="width: 100%; background: var(--accent); margin-bottom: 12px;">
+                    📋 Скопировать vpn://
+                </button>
+            </div>
+
+            <div id="config-view-qr" style="display:none; text-align:center; padding: 8px 0 16px 0;">
+                <div style="display:flex; justify-content:center; gap:8px; margin-bottom:12px;">
+                    <button type="button" class="filter-tab active" id="qr-tab-conf" onclick="switchQrType('conf')" style="padding:5px 14px; font-size:12px; border-radius:6px; cursor:pointer;">WireGuard .conf</button>
+                    <button type="button" class="filter-tab" id="qr-tab-vpn" onclick="switchQrType('vpn')" style="padding:5px 14px; font-size:12px; border-radius:6px; cursor:pointer;">Amnezia vpn://</button>
+                </div>
+                <div style="display:inline-block; padding:14px; background:#ffffff; border-radius:14px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);">
+                    <img id="config-qr-img" src="" alt="QR Code" style="width:230px; height:230px; display:block; object-fit:contain;" />
+                </div>
+                <div id="qr-caption" style="font-size:12px; color:var(--text-muted); margin-top:10px;">Наведите камеру в приложении WireGuard для сканирования</div>
+            </div>
+            
+            <div style="border-top: 1px solid var(--border-light); padding-top: 12px; margin-top: 8px;">
+                <button class="btn btn-outline" style="color: var(--warning); border-color: rgba(255, 165, 2, 0.4); font-size: 13px;" onclick="regenerateConfig()">
+                    🔄 Перевыпустить конфиг (новые ключи)
+                </button>
+            </div>
+        </div>
+        
+        <div id="config-empty" style="display:none; margin-top: 16px;">
+            <div class="card" style="padding: 16px; text-align: center;">
+                <div style="font-size: 32px; margin-bottom: 8px;">🔑</div>
+                <div style="font-weight: 500; margin-bottom: 6px; color: var(--text-main);">Конфиг ещё не сформирован</div>
+                <p style="color: var(--text-muted); font-size: 12px; line-height: 1.4; margin-bottom: 16px;">
+                    Этот абонент был добавлен вручную или до обновления бота (приватный ключ хранится на устройстве абонента).
+                    Вы можете перевыпустить ключи и сгенерировать готовый .conf в один клик.
+                </p>
+                <button class="btn btn-primary" onclick="regenerateConfig()">
+                    ⚡ Сгенерировать новый конфиг
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Universal In-App Alert / Confirm Modal -->
+    <div id="app-dialog-modal" class="modal" style="z-index: 9999; max-height: 400px; min-height: auto;">
+        <div class="modal-content" style="text-align: center; padding: 6px 0;">
+            <h3 id="app-dialog-title" style="margin-top: 4px; margin-bottom: 12px; font-size: 17px; color: var(--text-main);">Уведомление</h3>
+            <div id="app-dialog-msg" style="color: var(--text-main); font-size: 14px; font-family: var(--font-mono); white-space: pre-wrap; line-height: 1.5; margin-bottom: 20px; text-align: left; background: rgba(0,0,0,0.3); padding: 12px; border-radius: 10px; border: 1px solid var(--border-light);"></div>
+            <div id="app-dialog-buttons" style="display: flex; gap: 10px;">
+                <!-- Buttons injected dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let _ruActiveTab = 'top';
+        let currentTicketId = null;
+
+        // Universal In-App Dialog System for iOS Standalone & Telegram
+        let _appDialogCb = null;
+        function appAlert(msg, title = 'Уведомление', cb = null) {
+            if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.showAlert && window.Telegram.WebApp.initData) {
+                try {
+                    window.Telegram.WebApp.showAlert(msg, cb);
+                    return;
+                } catch(e) {}
+            }
+            document.getElementById('app-dialog-title').innerText = title;
+            document.getElementById('app-dialog-msg').innerText = msg;
+            document.getElementById('app-dialog-buttons').innerHTML = `
+                <button class="btn btn-primary" style="margin: 0; width: 100%;" onclick="closeAppDialog()">Понятно</button>
+            `;
+            _appDialogCb = cb;
+            document.getElementById('app-dialog-modal').classList.add('active');
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function appConfirm(msg, onConfirm, title = 'Подтверждение') {
+            if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.showConfirm && window.Telegram.WebApp.initData) {
+                try {
+                    window.Telegram.WebApp.showConfirm(msg, (ok) => { if(ok && onConfirm) onConfirm(true); });
+                    return;
+                } catch(e) {}
+            }
+            document.getElementById('app-dialog-title').innerText = title;
+            document.getElementById('app-dialog-msg').innerText = msg;
+            document.getElementById('app-dialog-buttons').innerHTML = `
+                <button class="btn btn-secondary" style="margin: 0; flex: 1;" onclick="closeAppDialog()">Отмена</button>
+                <button class="btn btn-primary" style="margin: 0; flex: 1;" id="app-dialog-confirm-btn">Подтвердить</button>
+            `;
+            document.getElementById('app-dialog-confirm-btn').onclick = () => {
+                closeAppDialog();
+                if (onConfirm) onConfirm(true);
+            };
+            document.getElementById('app-dialog-modal').classList.add('active');
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function closeAppDialog() {
+            document.getElementById('app-dialog-modal').classList.remove('active');
+            if (_appDialogCb) {
+                try { _appDialogCb(); } catch(e) {}
+                _appDialogCb = null;
+            }
+            if (!document.querySelector('.modal.active:not(#app-dialog-modal)')) {
+                document.getElementById('modal-overlay').classList.remove('active');
+            }
+        }
+
+        function showToast(msg, type = 'info') {
+            appAlert(msg, type === 'error' ? 'Ошибка' : (type === 'success' ? 'Успешно' : 'Информация'));
+        }
+
+        // Telegram Web App or Standalone iOS WebKit App Initialization
+        const _urlParams = new URLSearchParams(window.location.search);
+        const _apiKeyParam = _urlParams.get('api_key') || localStorage.getItem('vpn_api_key') || '';
+        if (_apiKeyParam) {
+            localStorage.setItem('vpn_api_key', _apiKeyParam);
+        }
+
+        const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : {
+            initData: '',
+            ready: () => {},
+            expand: () => {},
+            showAlert: (msg, cb) => appAlert(msg, 'Уведомление', cb),
+            showConfirm: (msg, cb) => appConfirm(msg, cb, 'Подтверждение'),
+            BackButton: { show: () => {}, hide: () => {}, onClick: () => {} },
+            openLink: (url) => window.open(url, '_blank')
+        };
+        // Always route alerts through appAlert/appConfirm if not in real Telegram
+        if (!tg.initData) {
+            tg.showAlert = (msg, cb) => appAlert(msg, 'Уведомление', cb);
+            tg.showConfirm = (msg, cb) => appConfirm(msg, cb, 'Подтверждение');
+        }
+        try { tg.ready(); tg.expand(); } catch(e) {}
+
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            tg.showAlert('JS Error: ' + msg + ' at line ' + lineNo);
+            return false;
+        };
+        setTimeout(() => { try { tg.expand(); } catch(e) {} }, 100);
+        document.addEventListener('click', () => { try { tg.expand(); } catch(e) {} }, {once: true});
+
+        if (!tg.initData && !_apiKeyParam) {
+            console.warn('tg.initData is empty — running in Quick Tunnel mode');
+        }
+
+        // API Client
+        const API_BASE = '/api';
+        
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            const apiKey = localStorage.getItem('vpn_api_key') || _urlParams.get('api_key') || '';
+            const headers = {};
+            if (apiKey) {
+                headers['X-API-Key'] = apiKey;
+            }
+            if (tg.initData) {
+                headers['X-Telegram-Init-Data'] = tg.initData;
+            }
+            if (body) headers['Content-Type'] = 'application/json';
+            
+            try {
+                const res = await fetch(`${API_BASE}${endpoint}`, {
+                    method,
+                    headers,
+                    body: body ? JSON.stringify(body) : null
+                });
+                
+                if (!res.ok) {
+                    if (res.status === 401 || res.status === 403) {
+                        tg.showAlert("Доступ запрещен. Вы не администратор.");
+                        return null;
+                    }
+                    // Try to get error detail from server
+                    let errMsg = `HTTP ${res.status}`;
+                    try {
+                        const errBody = await res.json();
+                        errMsg = errBody.detail || errMsg;
+                    } catch (_) {}
+                    throw new Error(errMsg);
+                }
+                return await res.json();
+            } catch (e) {
+                console.error(e);
+                throw e; // Re-throw so callers can handle specifically
+            }
+        }
+
+        async function apiCallSafe(endpoint, method = 'GET', body = null) {
+            try {
+                return await apiCall(endpoint, method, body);
+            } catch (e) {
+                tg.showAlert("Ошибка соединения с сервером");
+                return null;
+            }
+        }
+
+        // State
+        let currentUserIp = null;
+        let currentServerSide = null;
+        let currentFilter = 'all';
+        let allUsersData = [];
+        let lastNet = { SE: null, RU: null };
+        let activeTab = 'dashboard';
+        let loadChartInstance = null;
+        let currentChartTab = 'system';
+        let currentChartHistory = null;
+
+        tg.BackButton.onClick(() => {
+            if (document.getElementById('chart-modal').classList.contains('active')) {
+                closeChartModal();
+            } else if (currentUserIp) {
+                closeUserModal();
+            } else if (currentServerSide) {
+                closeServerModal();
+            }
+        });
+
+        // Navigation
+        function switchPage(pageId, btn) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(`page-${pageId}`).classList.add('active');
+            
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            activeTab = pageId;
+            tg.BackButton.hide();
+
+            if (pageId === 'dashboard') loadDashboard();
+            if (pageId === 'users') loadUsers();
+            if (pageId === 'tickets') loadTickets();
+            if (pageId === 'audit') loadAudit();
+            if (pageId === 'settings') loadSettings();
+            if (pageId === 'waiting') loadWaitingRoom();
+        }
+
+        function getColor(pct) {
+            if (pct > 85) return 'var(--danger)';
+            if (pct > 60) return 'var(--warning)';
+            return 'var(--success)';
+        }
+
+        function setFilter(filter, el) {
+            currentFilter = filter;
+            document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+            if (el) el.classList.add('active');
+            renderUsersList();
+        }
+
+                
+        let availableServers = [];
+        
+        async function openCreateUserModal() {
+            document.getElementById('create-user-alias').value = '';
+            
+            try {
+                if (availableServers.length === 0) {
+                    const servers = await apiCallSafe('/vpn_containers');
+                    availableServers = servers;
+                }
+                const select = document.getElementById('create-user-server');
+                select.innerHTML = availableServers.map(s => `<option value="${s.name}|${s.alias}">${s.alias}</option>`).join('');
+            } catch (err) {
+                console.error(err);
+                tg.showAlert("Ошибка загрузки серверов");
+                return;
+            }
+            
+            document.getElementById('create-user-modal').classList.add('active');
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+        
+        function closeCreateUserModal() {
+            document.getElementById('create-user-modal').classList.remove('active');
+            if (!document.querySelector('.modal.active')) {
+                document.getElementById('modal-overlay').classList.remove('active');
+            }
+        }
+        
+        async function submitCreateUser() {
+            const alias = document.getElementById('create-user-alias').value.trim();
+            const serverVal = document.getElementById('create-user-server').value;
+            if (!alias) return tg.showAlert("Введите имя!");
+            if (!serverVal) return tg.showAlert("Выберите сервер!");
+            
+            const parts = serverVal.split('|');
+            const sName = parts[0];
+            const sAlias = parts.slice(1).join('|'); // Alias may contain | from flag emojis
+            
+            const btn = document.querySelector('#create-user-modal .btn-primary');
+            btn.textContent = "⏳ Создаем...";
+            btn.disabled = true;
+            
+            try {
+                const res = await apiCall('/user/create', 'POST', {
+                    alias: alias,
+                    server_name: sName,
+                    server_alias: sAlias
+                });
+                
+                closeCreateUserModal();
+                
+                // Store for share and download
+                window._lastCreatedLink = res.link;
+                window._lastCreatedAlias = alias;
+                window._lastCreatedServer = sAlias;
+                window._lastCreatedConf = res.conf || '';
+                
+                document.getElementById('create-success-link').value = res.link;
+                if (document.getElementById('create-success-conf')) {
+                    document.getElementById('create-success-conf').value = res.conf || '';
+                }
+                document.getElementById('create-success-user-info').textContent = `👤 ${alias}  •  ${sAlias}`;
+                document.getElementById('create-success-modal').classList.add('active');
+                document.getElementById('modal-overlay').classList.add('active');
+                
+                if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                setTimeout(loadUsers, 2000);
+            } catch (err) {
+                tg.showAlert("Ошибка: " + err.message);
+            } finally {
+                btn.textContent = "Создать";
+                btn.disabled = false;
+            }
+        }
+        
+        function closeSuccessModal() {
+            document.getElementById('create-success-modal').classList.remove('active');
+            if (!document.querySelector('.modal.active')) {
+                document.getElementById('modal-overlay').classList.remove('active');
+            }
+        }
+        
+        function copyCreateLink() {
+            const el = document.getElementById('create-success-link');
+            el.select();
+            try { document.execCommand('copy'); } catch(_) {
+                navigator.clipboard.writeText(el.value).catch(() => {});
+            }
+            if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+            const btn = event.target;
+            const orig = btn.textContent;
+            btn.textContent = '✅ Скопировано!';
+            setTimeout(() => btn.textContent = orig, 2000);
+        }
+
+        function shareCreateLink() {
+            const link = window._lastCreatedLink || document.getElementById('create-success-link').value;
+            const alias = window._lastCreatedAlias || '';
+            const server = window._lastCreatedServer || '';
+            if (tg.switchInlineQuery) {
+                // Share via Telegram
+                tg.switchInlineQuery(link);
+            } else {
+                // Fallback: copy
+                copyCreateLink();
+            }
+        }
+    
+        function closeAllModals() {
+            document.querySelectorAll('.modal').forEach(m => m.classList.remove('active'));
+            document.getElementById('modal-overlay').classList.remove('active');
+            document.body.style.overflow = '';
+            currentUserIp = null;
+            currentServerSide = null;
+            currentTicketId = null;
+            if (activeTab === 'dashboard' || activeTab === 'tickets') tg.BackButton.hide();
+        }
+
+        // SVG Donut Ring Generator
+        function getRingHtml(pct, color) {
+            const dash = Math.max(0, 125 - (pct / 100) * 125);
+            return `
+                <div class="metric-ring">
+                    <svg>
+                        <circle cx="25" cy="25" r="20" class="bg"></circle>
+                        <circle cx="25" cy="25" r="20" class="fg" style="stroke: ${color}; stroke-dashoffset: ${dash}"></circle>
+                    </svg>
+                    <div class="metric-ring-value" style="color:${color}">${pct}%</div>
+                </div>
+            `;
+        }
+
+        // Dashboard
+        async function loadDashboard() {
+            const data = await apiCallSafe('/dashboard');
+            if (data) {
+                document.getElementById('dash-summary').innerHTML = `
+                    <div class="stat-box"><div class="stat-value" style="color:var(--success)">${data.online || 0}</div><div class="stat-label">Онлайн</div></div>
+                    <div class="stat-box"><div class="stat-value">${data.total || 0}</div><div class="stat-label">Всего</div></div>
+                `;
+                if(data.se_uptime) document.getElementById('se-uptime').innerText = `• Uptime: ${data.se_uptime}`;
+                if(data.ru_uptime) document.getElementById('ru-uptime').innerText = `• Uptime: ${data.ru_uptime}`;
+            }
+
+            const srv = await apiCallSafe('/servers');
+            if (srv) {
+                if (srv.se) {
+                    const cpuColor = getColor(srv.se.cpu);
+                    const ramColor = getColor(srv.se.ram);
+                    const diskColor = getColor(srv.se.disk);
+                    
+                    document.getElementById('se-stats').innerHTML = `
+                        <div class="dashboard-metrics">
+                            <div class="metric-card">
+                                ${getRingHtml(srv.se.cpu, cpuColor)}
+                                <div class="metric-label">CPU</div>
+                            </div>
+                            <div class="metric-card">
+                                ${getRingHtml(srv.se.ram, ramColor)}
+                                <div class="metric-label">RAM</div>
+                                <div class="metric-sub">${srv.se.ram_used} / ${srv.se.ram_total}G</div>
+                            </div>
+                            <div class="metric-card">
+                                ${getRingHtml(srv.se.disk, diskColor)}
+                                <div class="metric-label">DISK</div>
+                                <div class="metric-sub">${srv.se.disk_used} / ${srv.se.disk_total}G</div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    if (srv.se.net_recv !== undefined) {
+                        let dt = lastNet.SE ? (Date.now() - lastNet.SE.time) / 1000 : 0;
+                        if (dt > 0) {
+                            let rx = (srv.se.net_recv - lastNet.SE.rx) / dt;
+                            let tx = (srv.se.net_sent - lastNet.SE.tx) / dt;
+                            document.getElementById('se-speed').innerHTML = `
+                                <div class="traffic-box">
+                                    <div class="traffic-item">
+                                        <div class="metric-label">↓ Скачивание</div>
+                                        <div class="traffic-val rx">${(rx*8/1024/1024).toFixed(2)} Мбит/с</div>
+                                    </div>
+                                    <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.1)"></div>
+                                    <div class="traffic-item">
+                                        <div class="metric-label">↑ Отдача</div>
+                                        <div class="traffic-val tx">${(tx*8/1024/1024).toFixed(2)} Мбит/с</div>
+                                    </div>
+                                </div>
+                            `;
+                        } else {
+                            document.getElementById('se-speed').innerHTML = '';
+                        }
+                        lastNet.SE = { rx: srv.se.net_recv, tx: srv.se.net_sent, time: Date.now() };
+                    }
+                }
+                if (srv.ru) {
+                    const cpuColor = getColor(srv.ru.cpu);
+                    const ramColor = getColor(srv.ru.ram);
+                    const diskColor = getColor(srv.ru.disk);
+                    
+                    document.getElementById('ru-stats').innerHTML = `
+                        <div class="dashboard-metrics">
+                            <div class="metric-card">
+                                ${getRingHtml(srv.ru.cpu, cpuColor)}
+                                <div class="metric-label">CPU</div>
+                            </div>
+                            <div class="metric-card">
+                                ${getRingHtml(srv.ru.ram, ramColor)}
+                                <div class="metric-label">RAM</div>
+                                <div class="metric-sub">${srv.ru.ram_used} / ${srv.ru.ram_total}G</div>
+                            </div>
+                            <div class="metric-card">
+                                ${getRingHtml(srv.ru.disk, diskColor)}
+                                <div class="metric-label">DISK</div>
+                                <div class="metric-sub">${srv.ru.disk_used} / ${srv.ru.disk_total}G</div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    if (srv.ru.net_recv !== undefined) {
+                        let dt = lastNet.RU ? (Date.now() - lastNet.RU.time) / 1000 : 0;
+                        if (dt > 0) {
+                            let rx = (srv.ru.net_recv - lastNet.RU.rx) / dt;
+                            let tx = (srv.ru.net_sent - lastNet.RU.tx) / dt;
+                            document.getElementById('ru-speed').innerHTML = `
+                                <div class="traffic-box">
+                                    <div class="traffic-item">
+                                        <div class="metric-label">↓ Скачивание</div>
+                                        <div class="traffic-val rx">${(rx*8/1024/1024).toFixed(2)} Мбит/с</div>
+                                    </div>
+                                    <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.1)"></div>
+                                    <div class="traffic-item">
+                                        <div class="metric-label">↑ Отдача</div>
+                                        <div class="traffic-val tx">${(tx*8/1024/1024).toFixed(2)} Мбит/с</div>
+                                    </div>
+                                </div>
+                            `;
+                        } else {
+                            document.getElementById('ru-speed').innerHTML = '';
+                        }
+                        lastNet.RU = { rx: srv.ru.net_recv, tx: srv.ru.net_sent, time: Date.now() };
+                    }
+                } else {
+                    document.getElementById('ru-stats').innerHTML = `<div style="color:var(--danger)">Недоступен</div>`;
+                    document.getElementById('ru-speed').innerHTML = '';
+                }
+            }
+        }
+
+        // Users
+        async function loadUsers() {
+            allUsersData = await apiCall('/users') || [];
+            renderUsersList();
+        }
+
+        let bulkMode = false;
+        let selectedIps = new Set();
+        
+        function toggleBulkMode() {
+            bulkMode = !bulkMode;
+            selectedIps.clear();
+            document.getElementById('bulk-btn').innerText = bulkMode ? 'Отмена' : 'Выбрать';
+            document.getElementById('bulk-btn').className = bulkMode ? 'btn btn-secondary' : 'btn btn-outline';
+            if (bulkMode) {
+                document.getElementById('bulk-actions-bar').classList.add('active');
+            } else {
+                document.getElementById('bulk-actions-bar').classList.remove('active');
+            }
+            renderUsersList();
+        }
+
+        function toggleBulkSelect(ip, evt) {
+            evt.stopPropagation();
+            if (selectedIps.has(ip)) selectedIps.delete(ip);
+            else selectedIps.add(ip);
+            renderUsersList();
+        }
+
+        async function doBulkAction(action, data) {
+            if (selectedIps.size === 0) { tg.showAlert('Никого не выбрано'); return; }
+            tg.showConfirm(`Применить действие (${action}) к ${selectedIps.size} пользователям?`, async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall('/users/bulk', 'POST', { ips: Array.from(selectedIps), action: action, data: data });
+                    if (res && res.ok) {
+                        tg.showAlert('Успешно выполнено!');
+                        toggleBulkMode();
+                        loadUsers();
+                    }
+                }
+            });
+        }
+        
+        function bulkExtend(days) { doBulkAction('extend', { days }); }
+        function bulkDelete() { doBulkAction('delete', {}); }
+
+        function renderUsersList() {
+            let data = allUsersData;
+            if (currentFilter === 'online') {
+                data = data.filter(u => u.online_emoji === '🟢');
+            } else if (currentFilter === 'expired') {
+                data = data.filter(u => {
+                    let diffDays = u.paid_until ? (new Date(u.paid_until) - new Date()) / (1000 * 3600 * 24) : null;
+                    let isExpired = (diffDays !== null && diffDays <= 0) || (u.days_left !== null && u.days_left !== undefined && u.days_left <= 0) || u.speed_limit === 'punish' || u.speed_limit === 'carcer';
+                    return isExpired;
+                });
+            } else if (currentFilter !== 'all') {
+                data = data.filter(u => u.server && u.server.includes(currentFilter));
+            }
+            
+            const q = document.getElementById('search-input') ? document.getElementById('search-input').value.toLowerCase().trim() : '';
+            if (q) {
+                data = data.filter(u => 
+                    (u.alias && u.alias.toLowerCase().includes(q)) || 
+                    (u.tg_id && String(u.tg_id).includes(q)) ||
+                    (u.ip && (u.ip === q || u.ip.startsWith(q) || u.ip.endsWith('.' + q)))
+                );
+            }
+            
+            // Sort: Online first, then by alias
+            data.sort((a, b) => {
+                if (a.online_emoji === '🟢' && b.online_emoji !== '🟢') return -1;
+                if (a.online_emoji !== '🟢' && b.online_emoji === '🟢') return 1;
+                return (a.alias || a.ip).localeCompare(b.alias || b.ip);
+            });
+
+            if (data.length === 0) {
+                document.getElementById('users-list').innerHTML = '<div class="loading">Нет пользователей</div>';
+                return;
+            }
+
+            let html = '';
+            for (let u of data) {
+                let speedStr = u.speed_limit || 'max';
+                if (speedStr === 'max') speedStr = '🚀';
+                else if (speedStr === 'punish') speedStr = '💀';
+                else speedStr += 'M';
+
+                let flag = '🌍';
+                if (u.server && u.server.includes('SE')) flag = '🇸🇪';
+                else if (u.server && u.server.includes('RU')) flag = '🇷🇺';
+
+                let badgeClass = 'item-badge';
+                if (u.paid_until) {
+                    let diffDays = (new Date(u.paid_until) - new Date()) / (1000 * 3600 * 24);
+                    if (diffDays < 0) badgeClass += ' badge-danger';
+                    else if (diffDays <= 3) badgeClass += ' badge-warning';
+                } else {
+                    badgeClass += ' badge-danger';
+                }
+
+                let clickAction = bulkMode ? `toggleBulkSelect('${u.ip}', event)` : `openUserModal('${u.ip}', '${u.server || ""}')`;
+                let checkHtml = bulkMode ? `<div class="bulk-checkbox-container" style="display:flex"><input type="checkbox" class="bulk-checkbox" ${selectedIps.has(u.ip)?'checked':''} onclick="event.stopPropagation(); toggleBulkSelect('${u.ip}', event)"></div>` : '';
+                let renameBtnHtml = bulkMode ? '' : `<span onclick="event.stopPropagation(); quickRename('${u.ip}')" title="Переименовать" style="cursor:pointer; opacity:.55; font-size:13px; margin-left:6px;">✏️</span>`;
+
+                html += `
+                    <div class="list-item" onclick="${clickAction}">
+                        ${checkHtml}
+                        <div class="item-content">
+                            <div class="item-title">${u.online_emoji} ${u.alias || u.ip}${renameBtnHtml}</div>
+                            <div class="item-sub">${flag} ${speedStr} • ⬇️${u.downloaded}</div>
+                        </div>
+                        <div class="${badgeClass}">${u.paid_display || 'Без оплаты'}</div>
+                    </div>
+                `;
+            }
+            document.getElementById('users-list').innerHTML = html;
+        }
+
+        async function toggleBindPanel() {
+            const p = document.getElementById('user-bind-panel');
+            if (p.style.display === 'none' || !p.style.display) {
+                p.style.display = 'block';
+                populateBindUsersSelect();
+            } else {
+                p.style.display = 'none';
+            }
+        }
+
+        function populateBindUsersSelect() {
+            const select = document.getElementById('bind-target-user-select');
+            select.innerHTML = '<option value="">-- Выберите абонента --</option>';
+            if (!allUsersData) return;
+            
+            // Фильтруем пользователей, у которых есть TG ID и исключаем текущий IP
+            const boundUsers = allUsersData.filter(u => u.tg_id && u.ip !== currentUserIp);
+            // Группируем по tg_id, чтобы не дублировать
+            const seenTg = new Set();
+            boundUsers.forEach(u => {
+                if (!seenTg.has(u.tg_id)) {
+                    seenTg.add(u.tg_id);
+                    const opt = document.createElement('option');
+                    opt.value = u.ip;
+                    opt.textContent = `${u.alias || 'Без имени'} (${u.ip}) [TG: ${u.tg_id}]`;
+                    select.appendChild(opt);
+                }
+            });
+        }
+
+        async function applyUserBind() {
+            if (!currentUserIp) return;
+            const targetIp = document.getElementById('bind-target-user-select').value;
+            const customTg = document.getElementById('bind-custom-tg-id').value;
+            
+            let payload = {};
+            if (targetIp) {
+                payload.target_ip = targetIp;
+            } else if (customTg) {
+                payload.tg_id = parseInt(customTg);
+            } else {
+                showToast('Выберите абонента из списка или укажите TG ID', 'error');
+                return;
+            }
+            
+            const res = await apiCallSafe(`/user/${currentUserIp}/bind`, 'POST', payload);
+            if (res && res.ok) {
+                showToast('Конфиг успешно привязан к абоненту!', 'success');
+                document.getElementById('user-bind-panel').style.display = 'none';
+                openUserModal(currentUserIp);
+                loadUsers();
+            }
+        }
+
+        async function applyUserUnbind() {
+            if (!currentUserIp) return;
+            if (!confirm('Отвязать этот конфиг от Telegram аккаунта?')) return;
+            const res = await apiCallSafe(`/user/${currentUserIp}/unbind`, 'POST');
+            if (res && res.ok) {
+                showToast('Telegram аккаунт отвязан', 'success');
+                document.getElementById('user-bind-panel').style.display = 'none';
+                openUserModal(currentUserIp);
+                loadUsers();
+            }
+        }
+
+        let currentUserServer = '';
+        async function openUserModal(ip, server) {
+            currentUserIp = ip;
+            currentUserServer = server || '';
+            const data = await apiCallSafe(`/user/${ip}`);
+            if (!data) return;
+            
+            let currentUser = data;
+            
+            document.getElementById('modal-title').textContent = currentUser.alias || currentUser.ip;
+            document.getElementById('modal-ip').textContent = currentUser.ip;
+            const realIpEl = document.getElementById('modal-real-ip');
+            if (realIpEl) {
+                const ep = (currentUser.endpoint || '').replace('(none)', '');
+                realIpEl.textContent = ep ? '🌐 ' + ep.split(':')[0] : '';
+            }
+            
+            // Отображение статуса Telegram
+            const unbindBtn = document.getElementById('btn-unbind-tg');
+            if (currentUser.tg_id) {
+                document.getElementById('modal-server').innerHTML = `Сервер: ${currentUser.server} &nbsp;|&nbsp; 🔗 TG: <b>${currentUser.tg_id}</b>`;
+                if (unbindBtn) unbindBtn.style.display = 'block';
+                if (document.getElementById('bind-custom-tg-id')) {
+                    document.getElementById('bind-custom-tg-id').value = currentUser.tg_id;
+                }
+            } else {
+                document.getElementById('modal-server').innerHTML = `Сервер: ${currentUser.server} &nbsp;|&nbsp; <span style="color:var(--accent-red,#ff3366)">⚠️ TG не привязан</span>`;
+                if (unbindBtn) unbindBtn.style.display = 'none';
+                if (document.getElementById('bind-custom-tg-id')) {
+                    document.getElementById('bind-custom-tg-id').value = '';
+                }
+            }
+            if (document.getElementById('user-bind-panel')) {
+                document.getElementById('user-bind-panel').style.display = 'none';
+            }
+
+            document.getElementById('modal-online').textContent = `${currentUser.online_emoji}`;
+            
+            document.getElementById('modal-traffic-rx').textContent = currentUser.downloaded;
+            document.getElementById('modal-traffic-tx').textContent = currentUser.uploaded;
+            
+            let spd = currentUser.speed_limit;
+            if (spd === 'max') spd = 'Max';
+            else if (spd === 'punish') spd = 'Карцер';
+            else spd += ' Мбит';
+            document.getElementById('modal-speed').textContent = spd;
+            
+            let paidText = "Безлимит";
+            if (currentUser.paid_until) {
+                paidText = new Date(currentUser.paid_until).toLocaleDateString();
+            }
+            document.getElementById('modal-paid').textContent = paidText;
+
+            // Reset panels
+            document.getElementById('user-speed-panel').style.display = 'none';
+            document.getElementById('user-pay-panel').style.display = 'none';
+            document.getElementById('user-rename-panel').style.display = 'none';
+
+            document.getElementById('user-modal').classList.add('active'); 
+            document.getElementById('modal-overlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+            
+            if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+        }
+
+        function closeUserModal() {
+            closeAllModals(); loadUsers();
+            document.body.style.overflow = '';
+            currentUserIp = null;
+            loadUsers();
+        }
+
+        async function setSpeed(speed) {
+            if (!currentUserIp) return;
+            tg.HapticFeedback.impactOccurred('light');
+            const res = await apiCall(`/user/${currentUserIp}/speed`, 'POST', { speed });
+            if (res && res.ok) {
+                tg.showAlert(`Скорость изменена на: ${speed}`);
+                openUserModal(currentUserIp);
+            }
+        }
+
+        async function extendUser(days, lifetime = false) {
+            if (!currentUserIp) return;
+            const text = lifetime ? "Сделать подписку бессрочной?" : `Продлить подписку на ${days} дней?`;
+            tg.showConfirm(text, async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall(`/user/${currentUserIp}/extend`, 'POST', { days, lifetime });
+                    if (res && res.ok) {
+                        tg.showAlert('Подписка продлена!');
+                        openUserModal(currentUserIp);
+                    }
+                }
+            });
+        }
+
+        async function setCustomDate() {
+            if (!currentUserIp) return;
+            const dt = document.getElementById('custom-date-input').value;
+            if (!dt) {
+                tg.showAlert('Выберите дату');
+                return;
+            }
+            tg.showConfirm(`Установить окончание подписки на ${dt}?`, async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall(`/user/${currentUserIp}/extend`, 'POST', { days: 0, date: dt });
+                    if (res && res.ok) {
+                        tg.showAlert('Дата подписки обновлена!');
+                        openUserModal(currentUserIp);
+                    }
+                }
+            });
+        }
+
+        async function deleteUser() {
+            if (!currentUserIp) return;
+            tg.showConfirm(`Удалить профиль ${currentUserIp}? Это полностью удалит клиента из VPN!`, async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall(`/user/${currentUserIp}/delete`, 'POST');
+                    if (res && res.ok) {
+                        tg.showAlert('Профиль удален');
+                        closeUserModal();
+                    }
+                }
+            });
+        }
+
+        async function resetSubscription() {
+            if (!currentUserIp) return;
+            tg.showConfirm(`Сбросить оплату для ${currentUserIp}? Подписка будет аннулирована.`, async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall(`/user/${currentUserIp}/extend`, 'POST', { days: -9999 });
+                    if (res && res.ok) {
+                        tg.showAlert('Оплата сброшена');
+                        openUserModal(currentUserIp);
+                    }
+                }
+            });
+        }
+
+        // ─── Переименование абонента ─────────────────────────────────────────
+        function startRename() {
+            const panel = document.getElementById('user-rename-panel');
+            const input = document.getElementById('rename-input');
+            const title = document.getElementById('modal-title').textContent;
+            const ipText = document.getElementById('modal-ip').textContent;
+            input.value = (title === 'Новый пользователь' || title === ipText) ? '' : title;
+            panel.style.display = 'block';
+            input.focus();
+            input.select();
+            if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+        }
+
+        function cancelRename() {
+            document.getElementById('user-rename-panel').style.display = 'none';
+        }
+
+        async function saveRename() {
+            if (!currentUserIp) return;
+            const input = document.getElementById('rename-input');
+            const val = (input.value || '').trim();
+            const aliasToSend = val || 'Новый пользователь';
+            let res;
+            try {
+                res = await apiCall(`/user/${currentUserIp}/rename`, 'POST', { alias: aliasToSend });
+            } catch (e) {
+                tg.showAlert('Не удалось переименовать: ' + (e && e.message ? e.message : 'ошибка'));
+                return;
+            }
+            if (res && res.ok) {
+                const clean = res.alias || aliasToSend;
+                document.getElementById('modal-title').textContent = clean;
+                document.getElementById('user-rename-panel').style.display = 'none';
+                if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                loadUsers();
+            }
+        }
+
+        async function quickRename(ip) {
+            await openUserModal(ip);
+            startRename();
+        }
+
+        let _ruMonitorData = null;
+        
+        function openServerModal(side) {
+            currentServerSide = side;
+            document.getElementById('server-modal-title').innerText = side === 'SE' ? '🇸🇪 SE Server (Main)' : '🇷🇺 RU Server (Node)';
+            document.getElementById('server-actions').innerHTML = `
+                <button class="btn btn-warning" onclick="doServerAction('restart_container', this)">🔄 Рестарт контейнера</button>
+                <button class="btn btn-secondary" onclick="doServerAction('ping', this)">🩺 Выполнить Пинг</button>
+                <button class="btn btn-danger" onclick="doServerAction('reboot', this)">⚠️ Перезагрузить сервер</button>
+                <button class="btn btn-secondary" onclick="openChartModal()" style="grid-column: span 1;">📊 График нагрузки (24ч)</button>
+            `;
+            const activitySection = document.getElementById('ru-activity-section');
+            if (side === 'RU') {
+                activitySection.style.display = 'block';
+                _ruActiveTab = 'top';
+                document.getElementById('ru-tab-top').classList.add('active');
+                document.getElementById('ru-tab-now').classList.remove('active');
+                document.getElementById('ru-tab-events').classList.remove('active');
+                if (_ruMonitorData) {
+                    renderRuTab(_ruActiveTab);
+                } else {
+                    fetchRuMonitor();
+                }
+            } else {
+                activitySection.style.display = 'none';
+            }
+            fetchServerServices(side);
+            document.getElementById('server-modal').classList.add('active'); document.getElementById('modal-overlay').classList.add('active');
+            tg.BackButton.show();
+        }
+
+        function switchRuTab(tab) {
+            _ruActiveTab = tab;
+            ['top','now','events'].forEach(t => {
+                document.getElementById('ru-tab-' + t).classList.toggle('active', t === tab);
+            });
+            renderRuTab(tab);
+        }
+
+        function renderRuTab(tab) {
+            const cont = document.getElementById('ru-tab-content');
+            if (!_ruMonitorData) {
+                cont.innerHTML = '<div class="loading">Загрузка...</div>';
+                return;
+            }
+            if (_ruMonitorData.error) {
+                cont.innerHTML = `<div style="color:var(--danger); font-size:13px;">❌ ${_ruMonitorData.error}</div>`;
+                return;
+            }
+            const medals = ['🥇','🥈','🥉'];
+            if (tab === 'top') {
+                const top = _ruMonitorData.top_total || [];
+                if (!top.length) { cont.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Данных пока нет</div>'; return; }
+                cont.innerHTML = `
+                    <div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Топ по трафику (за сессию)</div>
+                    ${top.map((c,i) => `
+                        <div class="ru-client-row">
+                            <span>${medals[i] || (i+1)+'.'}</span>
+                            <span class="ru-client-name">${c.name}</span>
+                            <span style="color:var(--hint-color); font-size:11px;">${c.ip}</span>
+                            <span class="traffic-val rx" style="font-size:12px; margin-left:auto;">↓${c.dn_gb.toFixed(2)} ↑${c.up_gb.toFixed(2)} GB</span>
+                        </div>`).join('')}
+                `;
+            } else if (tab === 'now') {
+                const now = _ruMonitorData.active_now || [];
+                const conn = _ruMonitorData.conn_sw || 0;
+                let html = `<div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Активны сейчас &nbsp;·&nbsp; 🌐 ${conn} соед. → SE</div>`;
+                if (!now.length) {
+                    html += '<div style="color:var(--text-muted); font-size:13px;">🔴 Никто не активен (30с)</div>';
+                } else {
+                    html += now.map(c => `
+                        <div class="ru-client-row">
+                            <span>🟢</span>
+                            <span class="ru-client-name">${c.name}</span>
+                            <span style="color:var(--hint-color); font-size:11px;">${c.ip}</span>
+                            <span style="font-size:11px; margin-left:auto; color:var(--text-muted);">↑${(c.up_kb*8/1024/(c.interval_sec||30)).toFixed(2)}&nbsp;↓${(c.dn_kb*8/1024/(c.interval_sec||30)).toFixed(2)}&nbsp;Мбит/с</span>
+                        </div>`).join('');
+                }
+                cont.innerHTML = html;
+            } else if (tab === 'events') {
+                const ev = _ruMonitorData.events || [];
+                const xOk = _ruMonitorData.xray_ok;
+                const xPid = _ruMonitorData.xray_pid || '?';
+                let html = `<div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">
+                    Xray: ${xOk ? '<span style="color:var(--success)">&#x2705; Работает</span>' : '<span style="color:var(--danger)">&#x274c; Не запущен</span>'}&nbsp;
+                    PID&nbsp;<code>${xPid}</code></div>`;
+                if (!ev.length) {
+                    html += '<div style="color:var(--success); font-size:13px;">✅ Крашей не зафиксировано</div>';
+                } else {
+                    html += ev.slice().reverse().map(e => `
+                        <div class="ru-client-row" style="align-items:flex-start;">
+                            <span>${e.is_crash ? '⚠️' : '✅'}</span>
+                            <div>
+                                <div style="font-size:12px;">${e.text}</div>
+                                <div style="font-size:10px; color:var(--text-muted);">${e.ts}</div>
+                            </div>
+                        </div>`).join('');
+                }
+                cont.innerHTML = html;
+            }
+        }
+
+        async function fetchRuMonitor() {
+            try {
+                const data = await apiCall('/ru_monitor');
+                _ruMonitorData = data;
+                // Обновляем строку Xray в карточке дашборда
+                const row = document.getElementById('ru-xray-row');
+                if (row && data && !data.error) {
+                    const xOk = data.xray_ok;
+                    const conn = data.conn_sw || 0;
+                    const active = data.active_now || [];
+                    const activeNames = active.slice(0,3).map(c => c.name).join(', ');
+                    row.style.display = 'flex';
+                    row.style.gap = '8px';
+                    row.style.flexWrap = 'wrap';
+                    row.style.alignItems = 'center';
+                    row.innerHTML = `
+                        <span style="color:${xOk ? 'var(--success)' : 'var(--danger)'}">${xOk ? '🔗 Xray ✅' : '🔗 Xray ❌'}</span>
+                        <span style="color:var(--text-muted);">|</span>
+                        <span style="color:var(--hint-color);">🌐 ${conn} соед. → SE</span>
+                        ${activeNames ? `<span style="color:var(--text-muted);">|</span><span style="color:var(--hint-color);">👥 ${activeNames}</span>` : ''}
+                    `;
+                }
+                // Если модаль RU открыта — обновляем вкладку
+                if (currentServerSide === 'RU' && document.getElementById('server-modal').classList.contains('active')) {
+                    renderRuTab(_ruActiveTab);
+                }
+            } catch (e) {
+                // Таймаут — молча игнорируем
+            }
+        }
+
+        function closeServerModal() {
+            currentServerSide = null;
+            closeAllModals();
+            if (activeTab === 'dashboard') tg.BackButton.hide();
+        }
+
+        function switchChartTab(tab) {
+            currentChartTab = tab;
+            document.getElementById('chart-tab-system').classList.toggle('active', tab === 'system');
+            document.getElementById('chart-tab-network').classList.toggle('active', tab === 'network');
+            if (currentChartHistory) {
+                renderChart(currentChartHistory);
+            }
+        }
+
+        function closeChartModal() {
+            const modal = document.getElementById('chart-modal');
+            if (modal) modal.classList.remove('active');
+            if (loadChartInstance) {
+                try {
+                    loadChartInstance.destroy();
+                } catch (e) {}
+                loadChartInstance = null;
+            }
+            const srvModal = document.getElementById('server-modal');
+            if (!srvModal || !srvModal.classList.contains('active')) {
+                document.getElementById('modal-overlay').classList.remove('active');
+                if (activeTab === 'dashboard') tg.BackButton.hide();
+            }
+        }
+
+        async function openChartModal() {
+            try {
+                if (!currentServerSide) return;
+                if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred && !document.getElementById('chart-modal').classList.contains('active')) {
+                    tg.HapticFeedback.impactOccurred('light');
+                }
+                const history = await apiCall(`/server/${currentServerSide}/history?hours=24`);
+                if (!history) return;
+                
+                currentChartHistory = history;
+                document.getElementById('chart-title').textContent = `Нагрузка: ${currentServerSide}`;
+                document.getElementById('chart-modal').classList.add('active'); document.getElementById('modal-overlay').classList.add('active');
+
+                renderChart(history);
+            } catch (err) {
+                tg.showAlert("Ошибка графика: " + err.message);
+            }
+        }
+
+        function renderChart(history) {
+            const ctx = document.getElementById('loadChart').getContext('2d');
+            
+            const labels = history.map(d => {
+                const date = new Date(d.timestamp * 1000);
+                return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+            });
+            const cpuData = history.map(d => d.cpu);
+            const ramData = history.map(d => d.ram);
+            const rxData = history.map(d => (d.rx_speed * 8 / 1024 / 1024).toFixed(2));
+            const txData = history.map(d => (d.tx_speed * 8 / 1024 / 1024).toFixed(2));
+
+            if (loadChartInstance) {
+                loadChartInstance.destroy();
+            }
+
+            let datasets = [];
+            
+            if (currentChartTab === 'system') {
+                const gradCPU = ctx.createLinearGradient(0, 0, 0, 300);
+                gradCPU.addColorStop(0, 'rgba(255, 71, 87, 0.2)'); gradCPU.addColorStop(1, 'rgba(255, 71, 87, 0)');
+                const gradRAM = ctx.createLinearGradient(0, 0, 0, 300);
+                gradRAM.addColorStop(0, 'rgba(255, 165, 2, 0.2)'); gradRAM.addColorStop(1, 'rgba(255, 165, 2, 0)');
+                
+                datasets = [
+                    { label: 'CPU (%)', data: cpuData, borderColor: '#ff4757', backgroundColor: gradCPU, yAxisID: 'y', pointRadius: 0, borderWidth: 1.5, tension: 0.4, fill: true },
+                    { label: 'RAM (%)', data: ramData, borderColor: '#ffa502', backgroundColor: gradRAM, yAxisID: 'y', pointRadius: 0, borderWidth: 1.5, tension: 0.4, fill: true }
+                ];
+            } else {
+                const gradRX = ctx.createLinearGradient(0, 0, 0, 300);
+                gradRX.addColorStop(0, 'rgba(46, 213, 115, 0.2)'); gradRX.addColorStop(1, 'rgba(46, 213, 115, 0)');
+                const gradTX = ctx.createLinearGradient(0, 0, 0, 300);
+                gradTX.addColorStop(0, 'rgba(30, 144, 255, 0.2)'); gradTX.addColorStop(1, 'rgba(30, 144, 255, 0)');
+                
+                datasets = [
+                    { label: 'RX (Мбит/с)', data: rxData, borderColor: '#2ed573', backgroundColor: gradRX, yAxisID: 'y1', pointRadius: 0, borderWidth: 1.5, tension: 0.4, fill: true },
+                    { label: 'TX (Мбит/с)', data: txData, borderColor: '#1e90ff', backgroundColor: gradTX, yAxisID: 'y1', pointRadius: 0, borderWidth: 1.5, tension: 0.4, fill: true }
+                ];
+            }
+
+            loadChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: { labels: labels, datasets: datasets },
+                options: {
+                    animation: false,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: false },
+                        y: { 
+                            type: 'linear', display: currentChartTab === 'system', position: 'left',
+                            ticks: { font: { family: 'monospace' }, color: '#8A8D93' },
+                            border: { display: false },
+                            grid: { color: 'rgba(255, 255, 255, 0.03)' },
+                            min: 0, max: 100 
+                        },
+                        y1: {
+                            type: 'linear', display: currentChartTab === 'network', position: 'right',
+                            ticks: { font: { family: 'monospace' }, color: '#8A8D93' },
+                            border: { display: false },
+                            grid: { drawOnChartArea: false },
+                            min: 0
+                        }
+                    }
+                }
+            });
+        }
+
+        async function doServerAction(action, btnEl) {
+            if (!currentServerSide) return;
+            if (action === 'ping') {
+                const orig = btnEl ? btnEl.innerHTML : '';
+                if (btnEl) {
+                    btnEl.innerHTML = '⏳ Пингуем...';
+                    btnEl.disabled = true;
+                }
+                try {
+                    const res = await apiCall(`/server/${currentServerSide}/ping`, 'POST');
+                    if (res && res.ok) {
+                        appAlert(res.msg, `🩺 Пинг: ${currentServerSide}`);
+                    } else {
+                        appAlert('Не удалось выполнить пинг', 'Ошибка');
+                    }
+                } catch(e) {
+                    appAlert('Ошибка выполнения пинга: ' + (e ? e.message : 'timeout'), 'Ошибка');
+                } finally {
+                    if (btnEl) {
+                        btnEl.innerHTML = orig;
+                        btnEl.disabled = false;
+                    }
+                }
+                return;
+            }
+
+            let msg = `Перезапустить ${action === 'reboot' ? 'сервер' : 'контейнеры'} ${currentServerSide}?`;
+            appConfirm(msg, async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall(`/server/${currentServerSide}/${action}`, 'POST');
+                    if (res && res.ok) {
+                        appAlert(res.msg || 'Команда отправлена', 'Успешно');
+                        closeServerModal();
+                    }
+                }
+            });
+        }
+
+        // Audit Log
+        async function loadAudit() {
+            const data = await apiCallSafe('/audit?flt=all');
+            if (!data) return;
+
+            let html = '';
+            data.forEach(a => {
+                html += `
+                    <div class="list-item">
+                        <div class="item-info">
+                            <div class="item-title">${a.icon} ${a.name}</div>
+                            <div class="item-sub">${a.ts} • ${a.ip} ${a.details ? '• ' + a.details : ''}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            document.getElementById('audit-list').innerHTML = html;
+        }
+        
+        async function loadSettings() {
+            const data = await apiCallSafe('/settings');
+            if (data) {
+                document.getElementById('set-cpu').value = data.anomaly_cpu_threshold || '';
+                document.getElementById('set-ram').value = data.anomaly_ram_threshold || '';
+                document.getElementById('set-warn').value = data.billing_warn_days || '';
+                document.getElementById('set-crit').value = data.billing_critical_days || '';
+            }
+        }
+        
+        async function saveSettings() {
+            const payload = {
+                anomaly_cpu_threshold: document.getElementById('set-cpu').value,
+                anomaly_ram_threshold: document.getElementById('set-ram').value,
+                billing_warn_days: document.getElementById('set-warn').value,
+                billing_critical_days: document.getElementById('set-crit').value
+            };
+            const res = await apiCall('/settings', 'POST', payload);
+            if (res && res.ok) {
+                tg.showAlert(res.msg);
+            }
+        }
+        
+        // Waiting Room & Register
+        let currentRegIp = null;
+        async function loadWaitingRoom() {
+            const data = await apiCallSafe('/waiting_room');
+            if (!data) return;
+            
+            if (data.length === 0) {
+                document.getElementById('waiting-list').innerHTML = '<div class="loading">Нет новых пиров для регистрации.</div>';
+                return;
+            }
+            
+            let html = '';
+            data.forEach(u => {
+                html += `
+                    <div class="list-item" onclick="openRegisterModal('${u.ip}')">
+                        <div class="item-info">
+                            <div class="item-title">${u.online_emoji} ${u.ip}</div>
+                            <div class="item-sub">Сервер: ${u.server} • ⬇️${u.downloaded}</div>
+                        </div>
+                        <button class="btn btn-outline" style="width:auto; margin:0; padding:4px 12px; font-size:12px;">Регистрация</button>
+                    </div>
+                `;
+            });
+            document.getElementById('waiting-list').innerHTML = html;
+        }
+
+        function openRegisterModal(ip) {
+            currentRegIp = ip;
+            document.getElementById('reg-ip').innerText = ip;
+            document.getElementById('reg-alias').value = '';
+            document.getElementById('reg-tg').value = '';
+            document.getElementById('reg-days').value = '30';
+            document.getElementById('register-modal').classList.add('active'); document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function closeRegisterModal() {
+            currentRegIp = null;
+            closeAllModals();
+        }
+
+        async function submitRegistration() {
+            if (!currentRegIp) return;
+            const payload = {
+                alias: document.getElementById('reg-alias').value || 'User',
+                tg_id: document.getElementById('reg-tg').value || '',
+                days: parseInt(document.getElementById('reg-days').value || 0)
+            };
+            const res = await apiCall(`/user/${currentRegIp}/register`, 'POST', payload);
+            if (res && res.ok) {
+                tg.showAlert('Пользователь успешно зарегистрирован!');
+                closeRegisterModal();
+                loadWaitingRoom();
+            }
+        }
+
+        // Broadcast
+        async function sendBroadcast() {
+            const text = document.getElementById('broadcast-text').value;
+            if (!text.trim()) {
+                tg.showAlert('Введите текст рассылки');
+                return;
+            }
+            tg.showConfirm('Начать рассылку всем активным пользователям в Telegram?', async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall('/broadcast', 'POST', { text });
+                    if (res && res.ok) {
+                        tg.showAlert(res.msg);
+                        document.getElementById('broadcast-text').value = '';
+                    }
+                }
+            });
+        }
+
+        // Bulk Message
+        function openBulkMessageModal() {
+            if (selectedIps.size === 0) { tg.showAlert('Никого не выбрано'); return; }
+            document.getElementById('bulk-msg-text').value = '';
+            document.getElementById('bulk-msg-modal').classList.add('active'); 
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        async function sendBulkMessage() {
+            const text = document.getElementById('bulk-msg-text').value;
+            if (!text.trim()) {
+                tg.showAlert('Введите текст');
+                return;
+            }
+            tg.showConfirm(`Отправить сообщение ${selectedIps.size} пользователям?`, async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall('/users/bulk', 'POST', { 
+                        ips: Array.from(selectedIps), 
+                        action: 'message', 
+                        data: { text } 
+                    });
+                    if (res && res.ok) {
+                        tg.showAlert(res.msg || 'Рассылка выполнена');
+                        closeAllModals();
+                        toggleBulkMode();
+                    }
+                }
+            });
+        }
+
+        // Tickets
+        let currentTicketFilter = 'open';
+        let allTicketsData = [];
+        
+        function setTicketFilter(f, el) {
+            currentTicketFilter = f;
+            document.querySelectorAll('#page-tickets .filter-tab').forEach(t => t.classList.remove('active'));
+            el.classList.add('active');
+            loadTickets();
+        }
+
+        async function loadTickets() {
+            const data = await apiCallSafe(`/tickets?status=${currentTicketFilter}`);
+            if (data) {
+                allTicketsData = data;
+                renderTicketsList();
+            }
+        }
+
+        function renderTicketsList() {
+            if (allTicketsData.length === 0) {
+                document.getElementById('tickets-list').innerHTML = '<div class="loading">Нет тикетов.</div>';
+                return;
+            }
+            
+            let html = '';
+            allTicketsData.forEach(t => {
+                const statusClass = t.status === 'open' ? 'open' : 'closed';
+                const statusText = t.status === 'open' ? 'Открыт' : 'Закрыт';
+                
+                let lastMsgText = '...';
+                try {
+                    let msgs = JSON.parse(t.messages);
+                    if (msgs.length > 0) lastMsgText = msgs[msgs.length - 1].text;
+                } catch(e) {}
+
+                html += `
+                    <div class="ticket-card ${t.status === 'open' ? 'unread' : ''}" onclick="openTicketModal(${t.id})">
+                        <div class="ticket-header">
+                            <span class="ticket-user">👤 ${t.alias || t.ip || 'Аноним'}</span>
+                            <span class="ticket-time">${t.created_at}</span>
+                        </div>
+                        <div class="ticket-text">${lastMsgText}</div>
+                        <div style="margin-top: 8px;">
+                            <span class="ticket-status ${statusClass}">${statusText}</span>
+                        </div>
+                    </div>
+                `;
+            });
+            document.getElementById('tickets-list').innerHTML = html;
+        }
+
+        function openTicketModal(id) {
+            currentTicketId = id;
+            const t = allTicketsData.find(x => x.id === id);
+            if (!t) return;
+            
+            document.getElementById('ticket-modal-title').innerText = `Тикет #${id} (${t.alias || t.ip || 'Аноним'})`;
+            const st = document.getElementById('ticket-modal-status');
+            st.className = `ticket-status ${t.status === 'open' ? 'open' : 'closed'}`;
+            st.innerText = t.status === 'open' ? 'Открыт' : 'Закрыт';
+            
+            let chatHtml = '';
+            try {
+                let msgs = JSON.parse(t.messages);
+                msgs.forEach(m => {
+                    let text = m.text.replace(/\n/g, '<br>');
+                    let timeText = m.time ? `<div style="font-size:10px; opacity:0.6; margin-top:4px; text-align:right;">${m.time}</div>` : '';
+                    if (m.sender === 'user') {
+                        chatHtml += `<div class="chat-bubble chat-user"><b>Клиент:</b><br>${text}${timeText}</div>`;
+                    } else {
+                        chatHtml += `<div class="chat-bubble chat-admin"><b>Поддержка:</b><br>${text}${timeText}</div>`;
+                    }
+                });
+            } catch(e) {
+                chatHtml = `<div class="chat-bubble chat-user">${t.messages}</div>`;
+            }
+            
+            document.getElementById('ticket-chat').innerHTML = chatHtml;
+            
+            const controls = document.getElementById('ticket-controls');
+            if (t.status === 'closed') {
+                controls.innerHTML = `
+                    <button class="btn btn-danger" style="margin: 0; background: rgba(255,59,48,0.2); color: var(--danger); border: none;" onclick="deleteTicketAdmin()">🗑️ Удалить тикет</button>
+                `;
+            } else {
+                controls.innerHTML = `
+                    <textarea id="ticket-reply-text" class="modal-input" style="width: 100%; height: 80px; margin-bottom: 12px;" placeholder="Введите ответ..."></textarea>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn btn-outline" style="flex:1; margin:0; color:var(--text-color); border-color:var(--glass-border)" onclick="closeTicketAdmin()">❌ Закрыть</button>
+                        <button class="btn" style="flex:1; margin:0;" onclick="replyToTicket()">Ответить</button>
+                    </div>
+                `;
+            }
+
+            document.getElementById('ticket-modal').classList.add('active'); 
+            document.getElementById('modal-overlay').classList.add('active');
+            tg.BackButton.show();
+            
+            // Scroll to bottom
+            setTimeout(() => {
+                const chatArea = document.getElementById('ticket-chat');
+                chatArea.scrollTop = chatArea.scrollHeight;
+            }, 100);
+        }
+
+        function closeTicketModal() {
+            closeAllModals();
+            loadTickets();
+        }
+
+        async function replyToTicket() {
+            if (!currentTicketId) return;
+            const text = document.getElementById('ticket-reply-text').value;
+            if (!text.trim()) {
+                tg.showAlert('Введите текст ответа');
+                return;
+            }
+            
+            const res = await apiCall(`/ticket/${currentTicketId}/reply`, 'POST', { text });
+            if (res && res.ok) {
+                tg.showAlert('Ответ отправлен');
+                closeTicketModal();
+            }
+        }
+
+        async function closeTicketAdmin() {
+            if (!currentTicketId) return;
+            tg.showConfirm('Закрыть этот тикет?', async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall(`/ticket/${currentTicketId}/close`, 'POST');
+                    if (res && res.ok) {
+                        tg.showAlert('Тикет закрыт');
+                        closeTicketModal();
+                    }
+                }
+            });
+        }
+
+        async function deleteTicketAdmin() {
+            if (!currentTicketId) return;
+            tg.showConfirm('Удалить этот тикет навсегда?', async (confirm) => {
+                if (confirm) {
+                    const res = await apiCall(`/ticket/${currentTicketId}/delete`, 'POST');
+                    if (res && res.ok) {
+                        tg.showAlert('Тикет удален');
+                        closeTicketModal();
+                    }
+                }
+            });
+        }
+
+        // Downloads
+        async function downloadFile(endpoint, filename) {
+            const apiKey = localStorage.getItem('vpn_api_key') || _urlParams.get('api_key') || '';
+            const headers = {};
+            if (apiKey) headers['X-API-Key'] = apiKey;
+            if (tg.initData) headers['X-Telegram-Init-Data'] = tg.initData;
+            try {
+                const res = await fetch(API_BASE + endpoint, { headers });
+                if (!res.ok) {
+                    tg.showAlert("Ошибка скачивания: " + res.status);
+                    return;
+                }
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+            } catch (err) {
+                tg.showAlert("Ошибка: " + err);
+            }
+        }
+
+        
+        async function syncDatabaseWithVpn() {
+            showToast('Синхронизация с серверами VPN...', 'info');
+            const res = await apiCallSafe('/users/sync', 'POST');
+            if (res && res.ok) {
+                showToast(`Синхронизация завершена: +${res.added} новых, -${res.cleaned} удалено`, 'success');
+                loadUsers();
+                loadDashboard();
+            }
+        }
+
+        function downloadCsv() {
+            downloadFile('/export/csv', 'users.csv');
+        }
+        function downloadBackup() {
+            downloadFile('/export/backup', `database_${Math.floor(Date.now()/1000)}.db`);
+        }
+
+        // Init
+        switchPage('dashboard', document.querySelector('.tab-btn.active'));
+        setInterval(() => {
+            if (document.getElementById('page-dashboard').classList.contains('active')) {
+                loadDashboard();
+            }
+        }, 10000);
+
+        // Мониторинг RU Xray каждые 30 сек (когда дашборд активен)
+        fetchRuMonitor();
+        setInterval(() => {
+            if (document.getElementById('page-dashboard').classList.contains('active')) {
+                fetchRuMonitor();
+            }
+        }, 30000);
+
+    
+        // ─── Config Modal Logic ───────────────────────────────────────────────
+        let currentConfigText = '';
+        let currentConfigAlias = '';
+
+        async function openUserConfigModal() {
+            if (!currentUserIp) return;
+            const modal = document.getElementById('config-modal');
+            const title = document.getElementById('config-modal-title');
+            const loading = document.getElementById('config-loading');
+            const content = document.getElementById('config-content');
+            const empty = document.getElementById('config-empty');
+            const textarea = document.getElementById('config-text');
+
+            title.textContent = `📄 Конфиг (${currentUserIp})`;
+            loading.style.display = 'block';
+            content.style.display = 'none';
+            empty.style.display = 'none';
+            modal.classList.add('active');
+            document.getElementById('modal-overlay').classList.add('active');
+
+            try {
+                const srvParam = currentUserServer ? `?server=${encodeURIComponent(currentUserServer)}` : '';
+                const res = await apiCall(`/user/${currentUserIp}/config${srvParam}`);
+                loading.style.display = 'none';
+                currentConfigAlias = res.alias || currentUserIp;
+                if (res.has_config && res.conf) {
+                    currentConfigText = res.conf;
+                    textarea.value = res.conf;
+                    const vpnEl = document.getElementById('config-vpn-text');
+                    if (vpnEl) vpnEl.value = res.link || '';
+                    currentQrConf = res.qr_conf || '';
+                    currentQrLink = res.qr_link || '';
+                    const qrImg = document.getElementById('config-qr-img');
+                    if (qrImg) qrImg.src = currentQrConf || currentQrLink || '';
+                    switchConfigTab('conf');
+                    content.style.display = 'block';
+                } else {
+                    empty.style.display = 'block';
+                }
+            } catch (err) {
+                loading.style.display = 'none';
+                tg.showAlert('Ошибка загрузки: ' + err.message);
+            }
+        }
+
+        function closeConfigModal() {
+            document.getElementById('config-modal').classList.remove('active');
+            if (!document.getElementById('user-modal').classList.contains('active')) {
+                document.getElementById('modal-overlay').classList.remove('active');
+            }
+        }
+
+        
+        function switchConfigTab(tab) {
+            const tabConf = document.getElementById('config-tab-conf');
+            const tabVpn = document.getElementById('config-tab-vpn');
+            const tabQr = document.getElementById('config-tab-qr');
+            const viewConf = document.getElementById('config-view-conf');
+            const viewVpn = document.getElementById('config-view-vpn');
+            const viewQr = document.getElementById('config-view-qr');
+            if (tabConf) tabConf.classList.toggle('active', tab === 'conf');
+            if (tabVpn) tabVpn.classList.toggle('active', tab === 'vpn');
+            if (tabQr) tabQr.classList.toggle('active', tab === 'qr');
+            if (viewConf) viewConf.style.display = tab === 'conf' ? 'block' : 'none';
+            if (viewVpn) viewVpn.style.display = tab === 'vpn' ? 'block' : 'none';
+            if (viewQr) viewQr.style.display = tab === 'qr' ? 'block' : 'none';
+            if (tab === 'qr') switchQrType('conf');
+        }
+
+        function copyConfigVpnText() {
+            const txt = document.getElementById('config-vpn-text').value;
+            if (!txt) return;
+            navigator.clipboard.writeText(txt).then(() => {
+                const btn = document.getElementById('btn-copy-vpn');
+                const orig = btn.textContent;
+                btn.textContent = '✅ Скопировано!';
+                setTimeout(() => btn.textContent = orig, 2000);
+                if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+            }).catch(err => tg.showAlert('Не удалось скопировать: ' + err));
+        }
+
+        function copyConfigText() {
+            const txt = document.getElementById('config-text').value;
+            if (!txt) return;
+            navigator.clipboard.writeText(txt).then(() => {
+                const btn = document.getElementById('btn-copy-conf');
+                const orig = btn.textContent;
+                btn.textContent = '✅ Скопировано!';
+                setTimeout(() => btn.textContent = orig, 2000);
+                if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+            }).catch(err => tg.showAlert('Не удалось скопировать: ' + err));
+        }
+
+        function downloadConfigFile(customText = null, customFilename = null) {
+            const txt = customText || document.getElementById('config-text').value;
+            if (!txt) return;
+            const safeAlias = (customFilename || currentConfigAlias || currentUserIp || 'client').replace(/[^a-zA-Z0-9а-яА-Я_-]/g, '_');
+            const filename = `${safeAlias}.conf`;
+            const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+        }
+
+        async function regenerateConfig() {
+            if (!currentUserIp) return;
+            tg.showConfirm('Перевыпустить конфиг для этого абонента? Старый ключ перестанет работать, абоненту нужно будет обновить настройки.', async (confirmed) => {
+                if (!confirmed) return;
+                const loading = document.getElementById('config-loading');
+                const content = document.getElementById('config-content');
+                const empty = document.getElementById('config-empty');
+                loading.style.display = 'block';
+                content.style.display = 'none';
+                empty.style.display = 'none';
+
+                try {
+                    const res = await apiCall(`/user/${currentUserIp}/config/regenerate`, 'POST');
+                    loading.style.display = 'none';
+                    if (res.ok && res.conf) {
+                        currentConfigText = res.conf;
+                        currentConfigAlias = res.alias || currentUserIp;
+                        document.getElementById('config-text').value = res.conf;
+                        const vpnEl = document.getElementById('config-vpn-text');
+                        if (vpnEl) vpnEl.value = res.link || '';
+                        switchConfigTab('conf');
+                        content.style.display = 'block';
+                        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                    } else {
+                        tg.showAlert('Не удалось создать конфиг');
+                    }
+                } catch (err) {
+                    loading.style.display = 'none';
+                    tg.showAlert('Ошибка: ' + err.message);
+                }
+            });
+        }
+
+        function switchSuccessTab(tab) {
+            const tabConf = document.getElementById('success-tab-conf');
+            const tabVpn = document.getElementById('success-tab-vpn');
+            const viewConf = document.getElementById('success-view-conf');
+            const viewVpn = document.getElementById('success-view-vpn');
+            if (tab === 'conf') {
+                tabConf.classList.add('active');
+                tabVpn.classList.remove('active');
+                viewConf.style.display = 'block';
+                viewVpn.style.display = 'none';
+            } else {
+                tabVpn.classList.add('active');
+                tabConf.classList.remove('active');
+                viewVpn.style.display = 'block';
+                viewConf.style.display = 'none';
+            }
+        }
+
+        function copyCreateConfText() {
+            const el = document.getElementById('create-success-conf');
+            navigator.clipboard.writeText(el.value).then(() => {
+                const btn = document.getElementById('btn-copy-create-conf');
+                const orig = btn.textContent;
+                btn.textContent = '✅ Скопировано!';
+                setTimeout(() => btn.textContent = orig, 2000);
+                if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+            }).catch(() => {});
+        }
+
+        function downloadCreatedConfigFile() {
+            const txt = document.getElementById('create-success-conf').value;
+            downloadConfigFile(txt, window._lastCreatedAlias);
+        }
+
+        let currentQrConf = '';
+        let currentQrLink = '';
+
+        function switchQrType(type) {
+            const tabConf = document.getElementById('qr-tab-conf');
+            const tabVpn = document.getElementById('qr-tab-vpn');
+            const img = document.getElementById('config-qr-img');
+            const cap = document.getElementById('qr-caption');
+            if (type === 'conf') {
+                if (tabConf) tabConf.classList.add('active');
+                if (tabVpn) tabVpn.classList.remove('active');
+                if (img) img.src = currentQrConf;
+                if (cap) cap.textContent = 'Наведите камеру в приложении WireGuard для сканирования';
+            } else {
+                if (tabConf) tabConf.classList.remove('active');
+                if (tabVpn) tabVpn.classList.add('active');
+                if (img) img.src = currentQrLink;
+                if (cap) cap.textContent = 'Наведите камеру в приложении Amnezia VPN для импорта';
+            }
+        }
+
+        async function shareConfigFile() {
+            const txt = document.getElementById('config-text').value;
+            if (!txt) return;
+            const safeAlias = (currentConfigAlias || currentUserIp || 'client').replace(/[^a-zA-Z0-9а-яА-Я_-]/g, '_');
+            const filename = `${safeAlias}.conf`;
+
+            if (window.location.search.includes('api_key') || navigator.userAgent.includes('Pythonista')) {
+                window.location.href = `py-action://share?filename=${encodeURIComponent(filename)}&content=${encodeURIComponent(txt)}`;
+                return;
+            }
+
+            if (navigator.share) {
+                try {
+                    const file = new File([txt], filename, { type: 'text/plain' });
+                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                        await navigator.share({ title: `VPN - ${safeAlias}`, files: [file] });
+                        return;
+                    } else {
+                        await navigator.share({ title: `VPN - ${safeAlias}`, text: txt });
+                        return;
+                    }
+                } catch(e) {
+                    if (e.name !== 'AbortError') console.warn('Share error', e);
+                }
+            }
+            downloadConfigFile();
+        }
+
+        async function fetchServerServices(side) {
+            const listEl = document.getElementById('server-services-list');
+            if (!listEl || !side) return;
+            listEl.innerHTML = '<div class="loading" style="font-size:12px; margin:8px 0;">Опрос контейнеров...</div>';
+            try {
+                const res = await apiCallSafe(`/server/${side}/services`);
+                if (!res || !res.services || res.services.length === 0) {
+                    listEl.innerHTML = '<div style="font-size:12px; color:var(--text-muted); padding:8px 0;">Нет данных о службах</div>';
+                    return;
+                }
+                let html = '';
+                for (const s of res.services) {
+                    const isRun = s.status === 'running' || s.status === 'active';
+                    const badgeColor = isRun ? 'var(--success)' : 'var(--danger)';
+                    const statusEmoji = isRun ? '🟢' : '🔴';
+                    const restartBtn = s.action ? `<button class="btn btn-outline" style="width:auto; margin:0; padding:4px 10px; font-size:11px; border-color:var(--border-light);" onclick="doServiceRestart('${side}', '${s.action}', '${s.name}', this)">${s.action_label || '🔄 Рестарт'}</button>` : '';
+                    html += `
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:var(--surface); padding:8px 12px; border-radius:8px; border:1px solid var(--border-light);">
+                            <div>
+                                <div style="font-size:13px; font-weight:500; color:var(--text-main);">${s.name}</div>
+                                <div style="font-size:11px; color:${badgeColor}; margin-top:2px;">${statusEmoji} ${s.status}</div>
+                            </div>
+                            <div>${restartBtn}</div>
+                        </div>
+                    `;
+                }
+                listEl.innerHTML = html;
+            } catch(err) {
+                listEl.innerHTML = `<div style="font-size:12px; color:var(--danger); padding:8px 0;">Ошибка: ${err.message}</div>`;
+            }
+        }
+
+        async function doServiceRestart(side, action, name, btnEl) {
+            appConfirm(`Перезапустить службу "${name}" на сервере ${side}?`, async (confirm) => {
+                if (confirm) {
+                    const orig = btnEl.innerHTML;
+                    btnEl.innerHTML = '⏳...';
+                    btnEl.disabled = true;
+                    try {
+                        const res = await apiCall(`/server/${side}/${action}`, 'POST');
+                        if (res && res.ok) {
+                            appAlert(res.msg || 'Команда отправлена', 'Успешно');
+                            setTimeout(() => fetchServerServices(side), 3500);
+                        }
+                    } catch(e) {
+                        appAlert('Ошибка рестарта: ' + (e ? e.message : 'timeout'), 'Ошибка');
+                    } finally {
+                        btnEl.innerHTML = orig;
+                        btnEl.disabled = false;
+                    }
+                }
+            });
+        }
+
+
+    </script>
+</body>
+</html>

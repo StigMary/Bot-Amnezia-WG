@@ -1,48 +1,42 @@
-# ─── Python ───────────────────────────────────────────────────────────────────
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
-*.so
-
-# ─── Виртуальное окружение ────────────────────────────────────────────────────
-venv/
+# Virtual environment
 .venv/
-env/
+venv/
 ENV/
 
-# ─── Секреты и конфиги (НИКОГДА не пушить!) ──────────────────────────────────
-.env
-*.env
-secrets.py
+# Python cache & compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
 
-# ─── База данных и данные (содержат личные данные клиентов) ──────────────────
+# Sensitive data, databases, and logs
+.env
+.env.*
+!.env.example
 data/
 *.db
-*.sqlite
-*.sqlite3
-
-# ─── Логи ─────────────────────────────────────────────────────────────────────
+*.db-wal
+*.db-shm
 *.log
-*.log.*
-logs/
+*.pid
 
-# ─── Legacy / бэкапы ──────────────────────────────────────────────────────────
-legacy/
+# Backups & archives
+backups/
 *.tar.gz
+*.zip
 *.bak
-nohup.out
+*.bak.*
+*.bak2
+legacy/
 
-# ─── IDE ─────────────────────────────────────────────────────────────────────
+# Temp files
+*.tmp
+
+# OS & IDE
+.DS_Store
+Thumbs.db
 .idea/
 .vscode/
 *.swp
 *.swo
-.DS_Store
-Thumbs.db
-
-# ─── Прочее ───────────────────────────────────────────────────────────────────
-*.pid
-*.csv
-widget.json
