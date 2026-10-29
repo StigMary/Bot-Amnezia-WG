@@ -337,7 +337,7 @@ async def require_admin(request: Request) -> dict:
         logger.warning(f"Auth error from {request.client}: {e}")
         raise HTTPException(status_code=401, detail=f"Auth error: {e}")
         
-    admin_id_list = [int(x) for x in cfg.admin_ids]
+    admin_id_list = [int(x) for x in getattr(cfg, "admin_ids", [cfg.admin_id])]
     if int(user.get("id", 0)) not in admin_id_list:
         logger.warning(f"Access denied: user {user.get('id')} is not in admin_ids {admin_id_list}")
         raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
