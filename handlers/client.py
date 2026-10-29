@@ -109,12 +109,26 @@ def _get_inline_menu():
     return markup
 
 
-# ─── Активные тикеты поддержки {tg_id: True} ────────────────────────────────
-_active_tickets: dict = {}
-
 # ─── Пул клиентов, написавших /start, но ещё не привязанных ────────────────
 # {tg_id: {"name": ..., "username": ...}}
 _pending_pool: dict = {}
+
+
+def _has_open_ticket(tg_user_id: int) -> bool:
+    """Checks if user has an open ticket in DB."""
+    from database import get_tickets
+    tickets = get_tickets(status='open')
+    return any(t['tg_user_id'] == tg_user_id for t in tickets)
+
+
+def _get_open_ticket_id(tg_user_id: int):
+    """Returns open ticket id for user, or None."""
+    from database import get_tickets
+    tickets = get_tickets(status='open')
+    for t in tickets:
+        if t['tg_user_id'] == tg_user_id:
+            return t['id']
+    return None
 
 
 def _device_name(ip: str) -> str:
@@ -329,6 +343,7 @@ def register(bot: telebot.TeleBot):
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_ok|"))
     @admin_only_callback
     def cb_pay_ok(call):
+        bot.answer_callback_query(call.id)
         parts = call.data.split("|")
         tg_user_id = int(parts[1])
         days = int(parts[2])
@@ -337,14 +352,18 @@ def register(bot: telebot.TeleBot):
         new_date_iso = extend_paid_until_for_tg(tg_user_id, days)
         exp = datetime.fromisoformat(new_date_iso)
 
-        # Снимаем карцер с каждого устройства
+        # Снимаем карцер с каждого устройства (восстанавливаем прежнюю скорость, если была)
         devices = get_devices_by_tg_id(tg_user_id)
         released = 0
         for d in devices:
             if d["speed_limit"] == "punish" and d["protocol"]:
                 try:
-                    apply_limit(d["ip_address"], "max", d["protocol"])
-                    update_user_field(d["ip_address"], "speed_limit", "max")
+                    target_speed = "max"
+                    if "prev_speed_limit" in d.keys() and d["prev_speed_limit"] and d["prev_speed_limit"] != "punish":
+                        target_speed = d["prev_speed_limit"]
+                    apply_limit(d["ip_address"], target_speed, d["protocol"])
+                    update_user_field(d["ip_address"], "speed_limit", target_speed)
+                    update_user_field(d["ip_address"], "prev_speed_limit", None)
                     released += 1
                 except Exception as e:
                     logger.warning(f"Ошибка снятия карцера {d['ip_address']}: {e}")
@@ -384,6 +403,7 @@ def register(bot: telebot.TeleBot):
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_no|"))
     @admin_only_callback
     def cb_pay_no(call):
+        bot.answer_callback_query(call.id)
         tg_user_id = int(call.data.split("|")[1])
 
         log_audit("PAY_REJECT", details=f"tg_id={tg_user_id}", admin_id=call.from_user.id)
@@ -452,11 +472,12 @@ def register(bot: telebot.TeleBot):
 
     @bot.callback_query_handler(func=lambda c: c.data == "client_rename_list")
     def cb_rename_list(call):
+        bot.answer_callback_query(call.id)
         uid = call.from_user.id
         devices = get_devices_by_tg_id(uid)
 
         if not devices:
-            return bot.answer_callback_query(call.id, "У вас нет активных устройств.", show_alert=True)
+            return bot.send_message(call.message.chat.id, "У вас нет активных устройств.")
 
         if len(devices) == 1:
             # Если устройство одно, сразу просим имя
@@ -507,7 +528,7 @@ def register(bot: telebot.TeleBot):
         uid = call.from_user.id
         bot.answer_callback_query(call.id)
 
-        if uid in _active_tickets:
+        if _has_open_ticket(uid):
             # Тикет уже открыт — показываем это
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton("✅ Проблема решена", callback_data="client_close_ticket"))
@@ -521,8 +542,7 @@ def register(bot: telebot.TeleBot):
             )
             return
 
-        # Открываем новый тикет
-        _active_tickets[uid] = True
+        # Открываем новый тикет (ticket is created in msg_ticket_relay)
         uname = f"@{call.from_user.username}" if call.from_user.username else call.from_user.first_name
 
         # Кнопка закрытия тикета для админа
@@ -560,7 +580,10 @@ def register(bot: telebot.TeleBot):
     def cb_client_close_ticket(call):
         uid = call.from_user.id
         bot.answer_callback_query(call.id)
-        _active_tickets.pop(uid, None)
+        from database import close_ticket as _close_ticket_db
+        tid = _get_open_ticket_id(uid)
+        if tid:
+            _close_ticket_db(tid)
 
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
         bot.send_message(
@@ -582,7 +605,11 @@ def register(bot: telebot.TeleBot):
             return
         bot.answer_callback_query(call.id)
         uid = int(call.data.split("|")[1])
-        _active_tickets.pop(uid, None)
+        from database import get_tickets as _gt, close_ticket as _ct
+        for _t in _gt(status='open'):
+            if _t['tg_user_id'] == uid:
+                _ct(_t['id'])
+                break
 
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
         bot.send_message(
@@ -598,9 +625,9 @@ def register(bot: telebot.TeleBot):
     @bot.message_handler(
         func=lambda m: (
             m.chat.type == "private"
-            and m.from_user.id in _active_tickets
-            and m.text not in ["👤 Профиль", "/start"]
+            and getattr(m, 'text', '') not in ["👤 Профиль", "/start"]
             and m.from_user.id != cfg.admin_id
+            and not (m.text and m.text.startswith('/'))
         ),
         content_types=["text", "photo", "document"],
     )
@@ -608,11 +635,20 @@ def register(bot: telebot.TeleBot):
         uid = message.from_user.id
         uname = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
 
-        admin_markup = InlineKeyboardMarkup()
-        admin_markup.add(InlineKeyboardButton("❌ Закрыть тикет", callback_data=f"admin_close_ticket|{uid}"))
-        admin_markup.add(InlineKeyboardButton("💬 Ответить", callback_data=f"admin_reply_ticket|{uid}"))
+        text = message.text or message.caption or "Медиафайл"
 
-        header = f"🎟 <b>Тикет | {uname}</b> (<code>{uid}</code>)\n"
+        # Check before creating ticket whether one was already open
+        _has_open_ticket_before = _has_open_ticket(uid)
+
+        # Сохраняем в БД для WebApp
+        from database import create_ticket
+        ticket_id = create_ticket(uid, uname, text)
+
+        admin_markup = InlineKeyboardMarkup()
+        admin_markup.add(InlineKeyboardButton("❌ Закрыть", callback_data=f"admin_close_ticket|{uid}"))
+        admin_markup.add(InlineKeyboardButton("💬 Ответить (Telegram)", callback_data=f"admin_reply_ticket|{uid}"))
+
+        header = f"🎟 <b>Тикет #{ticket_id} | {uname}</b> (<code>{uid}</code>)\n"
         try:
             if message.text:
                 bot.send_message(
@@ -634,6 +670,11 @@ def register(bot: telebot.TeleBot):
                     parse_mode="HTML",
                     reply_markup=admin_markup,
                 )
+
+            # If no open ticket existed before, notify user
+            if not _has_open_ticket_before:
+                bot.reply_to(message, "📩 Ваш тикет создан и отправлен в поддержку! Ожидайте ответа администратора.")
+
         except Exception as e:
             logger.error(f"Ошибка пересылки сообщения тикета: {e}")
 
@@ -695,6 +736,16 @@ def register(bot: telebot.TeleBot):
                     caption=f"📩 <b>Фото от администратора:</b>\n\n{message.caption or ''}",
                     parse_mode="HTML",
                 )
+
+            # Синхронизируем ответ администратора в тикет-систему для WebApp
+            try:
+                from database import get_tickets, reply_ticket
+                open_tickets = [t for t in get_tickets(status='open') if t['tg_user_id'] == tg_id_int]
+                if open_tickets:
+                    rep_txt = message.text or message.caption or "(Файл/медиа от администратора)"
+                    reply_ticket(open_tickets[0]['id'], rep_txt)
+            except Exception as _te:
+                logger.warning(f"Не удалось записать ответ администратора в тикет: {_te}")
 
             if found_ip:
                 bind_tg_to_ip(found_ip, tg_id_int)

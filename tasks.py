@@ -15,9 +15,10 @@ from typing import TYPE_CHECKING
 import psutil
 import schedule
 
+from pathlib import Path
 from config import cfg, logger
-from database import get_all_users, log_audit, update_user_field
-from vpn_engine import apply_limit
+from database import get_all_users, log_audit, update_user_field, log_server_stat, get_setting
+from vpn_engine import apply_limit, check_and_restore_qos, get_ru_metrics, get_ru_monitor_data
 
 if TYPE_CHECKING:
     import telebot
@@ -27,31 +28,90 @@ if TYPE_CHECKING:
 
 _last_anomaly_alert: float = 0.0
 
+_stat_last_se_net = None
+_stat_last_se_time = 0.0
+_stat_last_ru_net = None
+_stat_last_ru_time = 0.0
+
+_ru_fail_count: int = 0
+_ru_down_alerted: bool = False
 
 def collect_metrics(bot: "telebot.TeleBot") -> None:
-    """Записывает CPU/RAM/Traffic в CSV и проверяет аномалии."""
-    global _last_anomaly_alert
+    """Записывает CPU/RAM/Traffic в базу для истории (каждые 5 минут)."""
+    global _last_anomaly_alert, _stat_last_se_net, _stat_last_se_time, _stat_last_ru_net, _stat_last_ru_time, _ru_fail_count, _ru_down_alerted
     try:
-        cpu = psutil.cpu_percent(interval=1)
-        ram = psutil.virtual_memory().percent
-        net = psutil.net_io_counters()
-        total_mb = (net.bytes_sent + net.bytes_recv) / 1024 / 1024
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-        file_exists = os.path.isfile(cfg.metrics_file)
-        with open(cfg.metrics_file, "a", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            if not file_exists:
-                w.writerow(["Timestamp", "CPU", "RAM", "Traffic_MB"])
-            w.writerow([ts, cpu, ram, round(total_mb, 2)])
-
         now = time.time()
+        
+        # --- SE Server ---
+        cpu_se = psutil.cpu_percent(interval=1)
+        ram_se = psutil.virtual_memory().percent
+        net_se = psutil.net_io_counters()
+        
+        rx_se = tx_se = 0.0
+        if _stat_last_se_net and (now - _stat_last_se_time) > 0:
+            dt = now - _stat_last_se_time
+            rx_se = (net_se.bytes_recv - _stat_last_se_net.bytes_recv) / dt
+            tx_se = (net_se.bytes_sent - _stat_last_se_net.bytes_sent) / dt
+        _stat_last_se_net = net_se
+        _stat_last_se_time = now
+        
+        log_server_stat("SE", cpu_se, ram_se, rx_se, tx_se)
+        check_and_restore_qos()
+
+        # --- RU Server ---
+        rf = get_ru_metrics()
+        if rf:
+            if _ru_down_alerted:
+                _ru_down_alerted = False
+                _ru_fail_count = 0
+                msg = "✅ *СВЯЗЬ С RU СЕРВЕРОМ ВОССТАНОВЛЕНА!*\n\nСервер 🇷🇺 RU снова в сети и отвечает штатно."
+                with contextlib.suppress(Exception):
+                    bot.send_message(cfg.admin_id, msg, parse_mode="Markdown")
+            else:
+                _ru_fail_count = 0
+
+            cpu_ru = float(rf.get("cpu", 0))
+            ram_ru = float(rf.get("ram", 0))
+            rx_ru = tx_ru = 0.0
+            
+            if _stat_last_ru_net and (now - _stat_last_ru_time) > 0:
+                dt = now - _stat_last_ru_time
+                rx_ru = (rf["net_recv"] - _stat_last_ru_net["net_recv"]) / dt
+                tx_ru = (rf["net_sent"] - _stat_last_ru_net["net_sent"]) / dt
+            _stat_last_ru_net = {"net_recv": rf["net_recv"], "net_sent": rf["net_sent"]}
+            _stat_last_ru_time = now
+            
+            log_server_stat("RU", cpu_ru, ram_ru, rx_ru, tx_ru)
+        else:
+            _ru_fail_count += 1
+            if _ru_fail_count >= 2 and not _ru_down_alerted:
+                _ru_down_alerted = True
+                msg = (
+                    "🚨 *ВНИМАНИЕ: СЕРВЕР RU НЕДОСТУПЕН!*\n\n"
+                    "Сервер 🇷🇺 RU (`45.140.168.134`) не отвечает на запросы более 5 минут.\n"
+                    "Трафик клиентов через RU-шлюз временно нарушен!"
+                )
+                with contextlib.suppress(Exception):
+                    bot.send_message(cfg.admin_id, msg, parse_mode="Markdown")
+
+        # Проверка аномалий
         if now - _last_anomaly_alert >= 600:
             alerts = []
-            if cpu > cfg.anomaly_cpu_threshold:
-                alerts.append(f"🔥 CPU: {cpu}% (порог: {cfg.anomaly_cpu_threshold}%)")
-            if ram > cfg.anomaly_ram_threshold:
-                alerts.append(f"💾 RAM: {ram}% (порог: {cfg.anomaly_ram_threshold}%)")
+            cpu_thresh = float(get_setting("anomaly_cpu_threshold", cfg.anomaly_cpu_threshold))
+            ram_thresh = float(get_setting("anomaly_ram_threshold", cfg.anomaly_ram_threshold))
+            
+            if cpu_se > cpu_thresh:
+                # Защита от ложных срабатываний: перепроверяем через 3 сек, чтобы отсеять 1-секундные всплески (cron, apt)
+                time.sleep(3)
+                cpu_confirm = psutil.cpu_percent(interval=2)
+                load1, _, _ = os.getloadavg()
+                num_cpus = os.cpu_count() or 1
+                if cpu_confirm > cpu_thresh or (load1 / num_cpus * 100) > cpu_thresh:
+                    alerts.append(f"🔥 CPU: {cpu_confirm:.1f}% (LA: {load1:.2f}, порог: {cpu_thresh}%)")
+                else:
+                    logger.info(f"Игнорирован кратковременный всплеск CPU: {cpu_se}% -> {cpu_confirm}% (LA: {load1:.2f})")
+            if ram_se > ram_thresh:
+                alerts.append(f"💾 RAM: {ram_se}% (порог: {ram_thresh}%)")
             if alerts:
                 _last_anomaly_alert = now
                 msg = "🚨 *АНОМАЛИЯ НА SE СЕРВЕРЕ!*\n\n" + "\n".join(alerts)
@@ -69,7 +129,8 @@ def auto_backup(bot: "telebot.TeleBot") -> None:
     try:
         bot.send_message(cfg.admin_id, "🕐 *Автоматический бэкап (ежедневный)*", parse_mode="Markdown")
         for path, caption in [
-            (cfg.db_file, "🗄 База данных"),
+            (cfg.db_file, "🗄 База данных бота (vpn_bot.db)"),
+            ("/opt/3x-ui/db/x-ui.db", "🛡 База данных 3X-UI (x-ui.db)"),
             (cfg.metrics_file, "📈 Метрики (CSV)"),
         ]:
             if os.path.exists(path):
@@ -131,7 +192,7 @@ def morning_digest(bot: "telebot.TeleBot") -> None:
 
 # ─── Виджет мониторинга ───────────────────────────────────────────────────────
 
-_WIDGET_FILE = "/home/vpnuser/vpn_bot/data/widget.json"
+_WIDGET_FILE = os.path.join(cfg.data_dir, "widget.json")
 
 # Трекеры скорости SE (локальный)
 _last_net_io = None
@@ -171,16 +232,27 @@ def _fmt_speed(bytes_per_sec: float) -> str:
 
 
 def _get_widget_text() -> str:
-    """Собирает текст виджета с реальными скоростями SE и RF."""
+    """Собирает текст виджета с реальными скоростями SE и RU."""
     global _last_net_io, _last_net_time, _last_rf_recv, _last_rf_sent, _last_rf_time
-    from vpn_engine import get_rf_metrics
+    from vpn_engine import get_ru_metrics as get_rf_metrics, get_vpn_stats
 
     now = time.time()
+
+    # ── Онлайн-счётчик ─────────────────────────────────────────────────────
+    try:
+        _stats = get_vpn_stats()
+        _online = sum(1 for u in _stats if u["online_emoji"] == "🟢")
+        _total = len(_stats)
+    except Exception:
+        _online = _total = 0
 
     # ── SE (локальный) ──────────────────────────────────────────────────────
     cpu_se = psutil.cpu_percent(interval=None)
     ram_se = psutil.virtual_memory().percent
     uptime_se = str(datetime.now() - datetime.fromtimestamp(psutil.boot_time())).split(".")[0]
+    # убираем дни если меньше суток
+    if uptime_se.startswith("0:"):
+        uptime_se = uptime_se[2:]
 
     curr_net = psutil.net_io_counters()
     if _last_net_io is not None and (now - _last_net_time) > 0:
@@ -192,7 +264,14 @@ def _get_widget_text() -> str:
     _last_net_io = curr_net
     _last_net_time = now
 
-    # ── RF (удалённый) ──────────────────────────────────────────────────────
+    def _mini_bar(pct, width=6):
+        filled = int(round(pct / 100 * width))
+        return "█" * filled + "░" * (width - filled)
+
+    se_cpu_bar = _mini_bar(cpu_se)
+    se_ram_bar = _mini_bar(ram_se)
+
+    # ── RU (удалённый) ──────────────────────────────────────────────────────
     rf = get_rf_metrics()
     if rf:
         if _last_rf_recv > 0 and (now - _last_rf_time) > 0:
@@ -205,29 +284,36 @@ def _get_widget_text() -> str:
         _last_rf_sent = rf["net_sent"]
         _last_rf_time = now
 
-        rf_status = "`Online`"
-        rf_cpu = f"`{rf['cpu']:.1f}%`"
-        rf_ram = f"`{rf['ram']:.1f}%`"
-        rf_uptime = f"`{rf['uptime']}`"
-        rf_speed = f"⬇️ `{_fmt_speed(dl_rf)}` | ⬆️ `{_fmt_speed(ul_rf)}`"
+        ru_cpu_bar = _mini_bar(float(rf["cpu"]))
+        ru_ram_bar = _mini_bar(float(rf["ram"]))
+        ru_uptime = str(rf["uptime"])
+        if ru_uptime.startswith("0:"):
+            ru_uptime = ru_uptime[2:]
+
+        ru_block = (
+            "🇷🇺 *Россия  ·  RU Node*\n"
+            f"🖥 `{ru_cpu_bar}` {float(rf.get('cpu', 0)):.0f}%   💾 `{ru_ram_bar}` {float(rf.get('ram', 0)):.0f}%\n"
+            f"⬇️ `{_fmt_speed(dl_rf)}`   ⬆️ `{_fmt_speed(ul_rf)}`\n"
+            f"⏱ `{ru_uptime}`"
+        )
     else:
-        rf_status = "`Offline`"
-        rf_cpu = rf_ram = rf_uptime = "N/A"
-        rf_speed = "❌ Данные недоступны"
+        ru_block = "🇷🇺 *Россия  ·  RU Node*\n❌ `Недоступен`"
+
+    _time_str = datetime.now().strftime("%H:%M:%S")
+    _online_line = f"🟢 {_online} онлайн  |  👥 {_total} всего" if _total else ""
 
     return (
-        "📊 *KJZNNETx | Глобальный мониторинг*\n"
+        "📊 *KJZNNETx  |  Мониторинг*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "🇸🇪 *Швеция (Main Node):*\n"
-        f"🖥 CPU: `{cpu_se}%` | 💾 RAM: `{ram_se}%` | ⏱ `{uptime_se}`\n"
-        f"⬇️ `{_fmt_speed(dl_se)}` | ⬆️ `{_fmt_speed(ul_se)}`\n"
+        "🇸🇪 *Швеция  ·  SE Node*\n"
+        f"🖥 `{se_cpu_bar}` {cpu_se:.0f}%   💾 `{se_ram_bar}` {ram_se:.0f}%\n"
+        f"⬇️ `{_fmt_speed(dl_se)}`   ⬆️ `{_fmt_speed(ul_se)}`\n"
+        f"⏱ `{uptime_se}`\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "🇷🇺 *Россия (RF Node):*\n"
-        f"🚀 Status: {rf_status}\n"
-        f"🖥 CPU: {rf_cpu} | 💾 RAM: {rf_ram} | ⏱ {rf_uptime}\n"
-        f"{rf_speed}\n"
+        f"{ru_block}\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔄 _Update:_ `{datetime.now().strftime('%H:%M:%S')}`"
+        + (f"{_online_line}\n" if _online_line else "")
+        + f"🔄 `{_time_str}`"
     )
 
 
@@ -249,7 +335,7 @@ def update_widget(bot: "telebot.TeleBot") -> None:
 
 def check_billing(bot: "telebot.TeleBot") -> None:
     logger.info("Запуск ежедневной проверки биллинга...")
-    from database import get_billing_accounts, get_devices_by_tg_id
+    from database import get_billing_accounts, get_devices_by_tg_id, was_notified_today, mark_notified
 
     now = datetime.now()
     accounts = get_billing_accounts()
@@ -273,37 +359,25 @@ def check_billing(bot: "telebot.TeleBot") -> None:
         devices = get_devices_by_tg_id(tg_id)
 
         try:
-            if days_left == cfg.billing_warn_days:
-                bot.send_message(
-                    tg_id,
-                    f"⏳ *Внимание!* Через *{cfg.billing_warn_days} дня* истекает подписка.\n\n"
-                    f"📅 Оплачено до: `{expire_dt.strftime('%d.%m.%Y')}`\n"
-                    f"📱 Активных конфигураций: *{len(devices)}*\n\n"
-                    f"Нажмите 💳 *Оплатить / Продлить* в меню бота.",
-                    parse_mode="Markdown",
-                )
-            elif days_left == cfg.billing_critical_days:
-                bot.send_message(
-                    tg_id,
-                    f"🚨 *Завтра последний день!*\n\n"
-                    f"📅 Оплачено до: `{expire_dt.strftime('%d.%m.%Y')}`\n"
-                    f"📱 Конфигураций: *{len(devices)}*\n\n"
-                    f"Пришлите чек через 💳 *Оплатить / Продлить*.",
-                    parse_mode="Markdown",
-                )
-            elif days_left < 0:
-                # Применяем карцер ко ВСЕМ устройствам аккаунта
+            warn_days = int(get_setting("billing_warn_days", cfg.billing_warn_days))
+            crit_days = int(get_setting("billing_critical_days", cfg.billing_critical_days))
+
+            # --- Карцер (приоритет выше предупреждений) ---
+            if days_left < 0:
                 punished = 0
                 for d in devices:
                     if d["speed_limit"] != "punish" and d["protocol"]:
                         try:
+                            current_limit = d["speed_limit"] or "max"
+                            update_user_field(d["ip_address"], "prev_speed_limit", current_limit)
                             apply_limit(d["ip_address"], "punish", d["protocol"])
                             update_user_field(d["ip_address"], "speed_limit", "punish")
                             punished += 1
                         except Exception as e:
                             logger.error(f"Карцер: ошибка для {d['ip_address']}: {e}")
 
-                if punished > 0:
+                if punished > 0 and not was_notified_today(tg_id, "punish"):
+                    mark_notified(tg_id, "punish")
                     log_audit("AUTO_PUNISH", details=f"tg_id={tg_id}, devices={punished}, paid_until={paid_until}")
                     bot.send_message(
                         tg_id,
@@ -313,10 +387,124 @@ def check_billing(bot: "telebot.TeleBot") -> None:
                         parse_mode="Markdown",
                     )
                     logger.info(f"Карцер применён: tg_id={tg_id}, устройств={punished}")
+                elif abs(days_left) in (3, 7, 14, 30) and not was_notified_today(tg_id, f"punish_{abs(days_left)}"):
+                    mark_notified(tg_id, f"punish_{abs(days_left)}")
+                    bot.send_message(
+                        tg_id,
+                        f"🛑 *Напоминание: подписка истекла {abs(days_left)} дн. назад.*\n\n"
+                        "Скорость ограничена до *1 Кбит/с*.\n"
+                        "Нажмите 💳 *Оплатить / Продлить*, чтобы восстановить доступ.",
+                        parse_mode="Markdown",
+                    )
+
+            # --- Критическое предупреждение (≤ crit_days, но не в прошлом) ---
+            elif days_left <= crit_days:
+                if not was_notified_today(tg_id, "crit"):
+                    mark_notified(tg_id, "crit")
+                    if days_left == 0:
+                        warn_title = "🚨 *Сегодня последний день действия подписки!*"
+                        action_text = "Продлите сегодня, чтобы доступ не отключился."
+                    elif days_left == 1:
+                        warn_title = "🚨 *Завтра последний день подписки! (Остался 1 день)*"
+                        action_text = "Пришлите чек через 💳 *Оплатить / Продлить*."
+                    else:
+                        warn_title = f"🚨 *Осталось {days_left} дн. до конца подписки!*"
+                        action_text = "Пришлите чек через 💳 *Оплатить / Продлить*."
+
+                    bot.send_message(
+                        tg_id,
+                        f"{warn_title}\n\n"
+                        f"📅 Оплачено до: `{expire_dt.strftime('%d.%m.%Y')}`\n"
+                        f"📱 Конфигураций: *{len(devices)}*\n\n"
+                        f"{action_text}",
+                        parse_mode="Markdown",
+                    )
+
+            # --- Предупреждение заранее (≤ warn_days, но выше критического порога) ---
+            elif days_left <= warn_days:
+                if not was_notified_today(tg_id, "warn"):
+                    mark_notified(tg_id, "warn")
+                    bot.send_message(
+                        tg_id,
+                        f"⏳ *Внимание!* Через *{days_left} дн.* истекает подписка.\n\n"
+                        f"📅 Оплачено до: `{expire_dt.strftime('%d.%m.%Y')}`\n"
+                        f"📱 Активных конфигураций: *{len(devices)}*\n\n"
+                        f"Нажмите 💳 *Оплатить / Продлить* в меню бота.",
+                        parse_mode="Markdown",
+                    )
         except Exception as e:
-            logger.error(f"check_billing: ошибка для tg_id={tg_id}: {e}")
+            msg = str(e).lower()
+            if "chat not found" in msg or "user is deactivated" in msg:
+                logger.info(f"check_billing: пользователь {tg_id} недоступен, пропускаем")
+            else:
+                logger.error(f"check_billing: ошибка для tg_id={tg_id}: {e}")
 
     logger.info("Проверка биллинга завершена.")
+
+
+# ─── Мониторинг Xray (алерт при краше) ───────────────────────────────────────
+
+_XRAY_LAST_CRASH_FILE = Path(cfg.data_dir) / "xray_last_crash.txt"
+
+
+def _load_last_crash_ts() -> str:
+    try:
+        return _XRAY_LAST_CRASH_FILE.read_text().strip()
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        logger.exception("Не удалось прочитать last crash ts")
+        return ""
+
+
+def _save_last_crash_ts(ts: str) -> None:
+    try:
+        _XRAY_LAST_CRASH_FILE.write_text(ts)
+    except Exception:
+        logger.exception("Не удалось сохранить last crash ts")
+
+
+_last_seen_crash_ts: str = _load_last_crash_ts()
+
+
+def check_xray_crash(bot: "telebot.TeleBot") -> None:
+    """Каждые 2 мин читает awg_monitor.log, шлёт алерт при новом краше Xray."""
+    global _last_seen_crash_ts
+    try:
+        data = get_ru_monitor_data(force=True)
+        if data.get("error"):
+            return
+
+        events = data.get("events", [])
+        crash_events = [e for e in events if e.get("is_crash")]
+        if not crash_events:
+            return
+
+        latest = crash_events[-1]
+        if latest["ts"] == _last_seen_crash_ts:
+            return  # уже отправляли
+
+        _last_seen_crash_ts = latest["ts"]
+        _save_last_crash_ts(latest["ts"])
+
+        active = data.get("active_now", [])
+        active_str = ""
+        if active:
+            active_str = "\n👥 *Активные в момент краша:*"
+            for c in active[:5]:
+                active_str += f"\n  • {c['name']} {c['ip']}  ↑{c['up_kb']}KB ↓{c['dn_kb']}KB"
+
+        text = (
+            f"⚠️ *XRAY ПЕРЕЗАПУСТИЛСЯ* на 🇷🇺 RU\n"
+            f"🕐 `{latest['ts']}`\n"
+            f"🔄 PID: `{data.get('xray_pid', '?')}`\n"
+            f"🌐 Соединений к SE: `{data.get('conn_sw', '?')}`\n"
+            f"{active_str}"
+        )
+        bot.send_message(cfg.admin_id, text, parse_mode="Markdown")
+        logger.warning(f"Xray алерт отправлен: {latest['ts']}")
+    except Exception as e:
+        logger.error(f"check_xray_crash: {e}")
 
 
 # ─── Запуск фонового планировщика ────────────────────────────────────────────
@@ -324,11 +512,13 @@ def check_billing(bot: "telebot.TeleBot") -> None:
 
 def start_scheduler(bot: "telebot.TeleBot") -> None:
     """Запускает фоновый поток с планировщиком задач."""
+    schedule.clear()
     schedule.every(5).minutes.do(collect_metrics, bot)
     schedule.every().day.at(cfg.backup_time).do(auto_backup, bot)
     schedule.every().day.at(cfg.billing_check_time).do(check_billing, bot)
     schedule.every().day.at("09:00").do(morning_digest, bot)
     schedule.every(30).seconds.do(update_widget, bot)
+    schedule.every(2).minutes.do(check_xray_crash, bot)
 
     def _run():
         while True:

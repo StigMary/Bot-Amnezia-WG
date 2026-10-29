@@ -1,29 +1,14 @@
 """
-bot.py — Главная точка входа.
-Инициализация, регистрация хэндлеров, запуск планировщика, graceful shutdown.
+bot.py — Точка входа Telegram-бота и фоновых служб.
+Поддерживает режим Webhook (по умолчанию при запущенном webapp)
+и режим Polling с экспоненциальным backoff (fallback).
 """
 
 import contextlib
 import os
 import signal
 import sys
-
-try:
-    import fcntl  # POSIX
-
-    _HAS_FCNTL = True
-except ImportError:
-    fcntl = None
-    _HAS_FCNTL = False
-
-try:
-    import msvcrt  # Windows
-
-    _HAS_MSVCRT = True
-except ImportError:
-    msvcrt = None
-    _HAS_MSVCRT = False
-
+import time
 import telebot
 
 import handlers.admin as admin_handler
@@ -33,50 +18,24 @@ from database import init_db, log_audit
 from tasks import start_scheduler
 from vpn_engine import auto_apply_qos
 
-# ─── Защита от двойного запуска ──────────────────────────────────────────────
-
 _lock_file = None
 
-
 def check_single_instance():
-    """
-    Кросс-платформенная защита от двойного запуска.
-    POSIX: fcntl.flock; Windows: msvcrt.locking; иначе — мягкая проверка PID-файла.
-    """
     global _lock_file
     try:
+        import fcntl
         _lock_file = open(cfg.pid_file, "a+")
-    except OSError as e:
-        logger.warning(f"Не удалось открыть pid-файл {cfg.pid_file}: {e}. Пропускаем lock.")
-        return
-
-    if _HAS_FCNTL:
         try:
             fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             logger.error("Бот уже запущен (flock). Выход.")
             sys.exit(1)
-    elif _HAS_MSVCRT:
-        try:
-            _lock_file.seek(0)
-            msvcrt.locking(_lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError:
-            logger.error("Бот уже запущен (msvcrt). Выход.")
-            sys.exit(1)
-    else:
-        logger.warning("Нет fcntl/msvcrt — single-instance защита отключена.")
-
-    try:
         _lock_file.seek(0)
         _lock_file.truncate()
         _lock_file.write(str(os.getpid()))
         _lock_file.flush()
     except Exception as e:
-        logger.warning(f"Не удалось записать PID в {cfg.pid_file}: {e}")
-
-
-# ─── Graceful shutdown ────────────────────────────────────────────────────────
-
+        logger.warning(f"Single-instance check warning: {e}")
 
 def graceful_shutdown(bot: telebot.TeleBot, signum, frame):
     logger.info(f"Получен сигнал {signum}. Завершение...")
@@ -92,51 +51,65 @@ def graceful_shutdown(bot: telebot.TeleBot, signum, frame):
     logger.info("Бот остановлен.")
     sys.exit(0)
 
-
-# ─── Точка входа ─────────────────────────────────────────────────────────────
-
-
 def main():
     check_single_instance()
     init_db()
 
-    bot = telebot.TeleBot(cfg.token, parse_mode=None)
-
-    # Регистрация хэндлеров:
-    # admin ПЕРВЫМ — его /start с @admin_only перехватит команду раньше client
+    bot = telebot.TeleBot(cfg.token, parse_mode=None, threaded=True)
     admin_handler.register(bot)
     client_handler.register(bot)
-
-    # Запуск планировщика
-    start_scheduler(bot)
-
-    # Авто-применение QoS из БД
-    try:
-        auto_apply_qos()
-    except Exception as e:
-        logger.error(f"Ошибка авто-QoS: {e}")
 
     # Сигналы завершения
     signal.signal(signal.SIGTERM, lambda s, f: graceful_shutdown(bot, s, f))
     signal.signal(signal.SIGINT, lambda s, f: graceful_shutdown(bot, s, f))
 
-    log_audit("BOT_START")
-    logger.info("VPN Bot v3.0 запущен!")
+    # Проверяем режим работы: Webhook vs Polling
+    use_webhook = os.getenv("USE_WEBHOOK", "true").lower() in ("true", "1", "yes")
+    webhook_base = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
 
-    # Основной цикл с экспоненциальным backoff
-    import time
+    if use_webhook and webhook_base:
+        full_webhook = f"{webhook_base}/webhook/telegram"
+        try:
+            current_info = bot.get_webhook_info()
+            if current_info.url != full_webhook:
+                logger.info(f"Обновление Webhook на: {full_webhook}")
+                bot.remove_webhook()
+                time.sleep(0.5)
+                bot.set_webhook(url=full_webhook, max_connections=40)
+            else:
+                logger.info(f"Webhook уже активен: {full_webhook}")
+
+            log_audit("BOT_START", details="Mode: Webhook Monitor")
+            logger.info("VPN Bot v3.0 запущен в режиме монитора Webhook.")
+
+            # В режиме Webhook обновления обрабатывает webapp (uvicorn).
+            # Процесс bot.py следит за состоянием и планировщиком при необходимости.
+            while True:
+                time.sleep(60)
+        except Exception as e:
+            logger.error(f"Ошибка регистрации Webhook: {e}. Переход в Polling...")
+
+    # Fallback / Ручной режим: Polling с надежным Exponential Backoff
+    logger.info("Запуск в режиме Long Polling с защитой от сбоев Telegram...")
+    with contextlib.suppress(Exception):
+        bot.remove_webhook()
+
+    start_scheduler(bot)
+    with contextlib.suppress(Exception):
+        auto_apply_qos()
+
+    log_audit("BOT_START", details="Mode: Polling")
 
     backoff = 5
-    max_backoff = 300  # 5 минут
+    max_backoff = 300
     while True:
         try:
-            bot.polling(none_stop=True, timeout=90)
-            backoff = 5  # сбрасываем при штатном выходе
+            bot.polling(none_stop=False, timeout=30, long_polling_timeout=25)
+            backoff = 5
         except Exception as e:
-            logger.error(f"Сбой polling, перезапуск через {backoff} сек: {e}")
+            logger.error(f"Polling error ({e}). Ожидание {backoff}с перед повтором...")
             time.sleep(backoff)
             backoff = min(backoff * 2, max_backoff)
-
 
 if __name__ == "__main__":
     main()
