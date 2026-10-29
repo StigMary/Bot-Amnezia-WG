@@ -179,12 +179,14 @@ def get_local_ru_metrics():
         return None
 
 def get_remote_se_metrics():
+    if not cfg.se_host:
+        return None
     cmd = "cat /proc/loadavg; free -m; df -m /; cat /proc/uptime; cat /proc/net/dev"
     try:
         import subprocess
         out = subprocess.check_output([
-            "ssh", "-p", "10686", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
-            "lilkings@150.251.154.180", cmd
+            "ssh", "-p", str(cfg.se_ssh_port), "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
+            f"{cfg.se_user}@{cfg.se_host}", cmd
         ], text=True, timeout=5)
     except Exception as e:
         logger.warning(f"Error fetching SE metrics: {e}")
@@ -613,19 +615,22 @@ async def get_server_services_endpoint(side: str, admin=Depends(require_admin)):
 
     elif side == "SE":
         try:
-            out = subprocess.check_output([
-                "ssh", "-p", "10686", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
-                "lilkings@150.251.154.180",
-                "systemctl is-active x-ui; ss -uln | grep -q 27174 && echo awg_ok || echo awg_down; pgrep -f xray-linux-amd64 >/dev/null && echo xray_ok || echo xray_down"
-            ], text=True, timeout=5).strip().splitlines()
+            if not cfg.se_host:
+                services.append({"name": "Службы SE", "status": "не настроен SE_HOST", "action": None, "action_label": None})
+            else:
+                out = subprocess.check_output([
+                    "ssh", "-p", str(cfg.se_ssh_port), "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
+                    f"{cfg.se_user}@{cfg.se_host}",
+                    "systemctl is-active x-ui; ss -uln | grep -q 27174 && echo awg_ok || echo awg_down; pgrep -f xray-linux-amd64 >/dev/null && echo xray_ok || echo xray_down"
+                ], text=True, timeout=5).strip().splitlines()
 
-            xui_st = out[0].strip() if len(out) > 0 else "unknown"
-            awg_st = "running" if len(out) > 1 and out[1].strip() == "awg_ok" else "stopped"
-            xray_st = "running" if len(out) > 2 and out[2].strip() == "xray_ok" else "stopped"
+                xui_st = out[0].strip() if len(out) > 0 else "unknown"
+                awg_st = "running" if len(out) > 1 and out[1].strip() == "awg_ok" else "stopped"
+                xray_st = "running" if len(out) > 2 and out[2].strip() == "xray_ok" else "stopped"
 
-            services.append({"name": "3X-UI (VLESS Reality)", "status": xui_st, "action": "restart_xui", "action_label": "🔄 Рестарт"})
-            services.append({"name": "AmneziaWG (awg2)", "status": awg_st, "action": "restart_xui", "action_label": "🔄 Рестарт"})
-            services.append({"name": "Xray Core (SE Node)", "status": xray_st, "action": "restart_xui", "action_label": "🔄 Рестарт"})
+                services.append({"name": "3X-UI (VLESS Reality)", "status": xui_st, "action": "restart_xui", "action_label": "🔄 Рестарт"})
+                services.append({"name": "AmneziaWG (awg2)", "status": awg_st, "action": "restart_xui", "action_label": "🔄 Рестарт"})
+                services.append({"name": "Xray Core (SE Node)", "status": xray_st, "action": "restart_xui", "action_label": "🔄 Рестарт"})
         except Exception as e:
             services.append({"name": "Службы SE", "status": f"ошибка: {e}", "action": None, "action_label": None})
 
@@ -659,10 +664,12 @@ async def server_action(side: str, action: str, admin=Depends(require_admin)):
             log_audit("RESTART_RU_AWG", admin_id=cfg.admin_id)
             return {"ok": True, "msg": "RU контейнер (AmneziaWG) перезапускается и восстанавливает QoS (займет ~5 сек)"}
         elif side == "SE":
+            if not cfg.se_host:
+                return {"ok": False, "msg": "SE_HOST не настроен"}
             def _restart_se_xui():
                 subprocess.run([
-                    "ssh", "-p", "10686", "-o", "BatchMode=yes",
-                    "lilkings@150.251.154.180", "sudo systemctl restart x-ui"
+                    "ssh", "-p", str(cfg.se_ssh_port), "-o", "BatchMode=yes",
+                    f"{cfg.se_user}@{cfg.se_host}", "sudo systemctl restart x-ui"
                 ])
             threading.Thread(target=_restart_se_xui, daemon=True).start()
             log_audit("RESTART_SE_SERVICES", admin_id=cfg.admin_id)
@@ -674,18 +681,22 @@ async def server_action(side: str, action: str, admin=Depends(require_admin)):
             log_audit("REBOOT_RU", admin_id=cfg.admin_id)
             return {"ok": True, "msg": "RU сервер уходит в перезагрузку"}
         elif side == "SE":
+            if not cfg.se_host:
+                return {"ok": False, "msg": "SE_HOST не настроен"}
             subprocess.Popen([
-                "ssh", "-p", "10686", "-o", "BatchMode=yes",
-                "lilkings@150.251.154.180", "sudo reboot"
+                "ssh", "-p", str(cfg.se_ssh_port), "-o", "BatchMode=yes",
+                f"{cfg.se_user}@{cfg.se_host}", "sudo reboot"
             ])
             log_audit("REBOOT_SE", admin_id=cfg.admin_id)
             return {"ok": True, "msg": "SE сервер уходит в перезагрузку"}
 
     elif action == "restart_xui":
         if side == "SE":
+            if not cfg.se_host:
+                return {"ok": False, "msg": "SE_HOST не настроен"}
             threading.Thread(target=lambda: subprocess.run([
-                "ssh", "-p", "10686", "-o", "BatchMode=yes",
-                "lilkings@150.251.154.180", "sudo systemctl restart x-ui"
+                "ssh", "-p", str(cfg.se_ssh_port), "-o", "BatchMode=yes",
+                f"{cfg.se_user}@{cfg.se_host}", "sudo systemctl restart x-ui"
             ]), daemon=True).start()
             log_audit("RESTART_3XUI", admin_id=cfg.admin_id)
             return {"ok": True, "msg": "3X-UI на SE перезапускается (~3 сек)"}
@@ -700,13 +711,14 @@ async def server_action(side: str, action: str, admin=Depends(require_admin)):
 
     elif action == "restart_bot":
         if side == "RU":
-            threading.Thread(target=lambda: (time.sleep(1), subprocess.run(["sudo", "systemctl", "restart", "msk_bot"])), daemon=True).start()
+            service_name = "msk_bot" if os.path.exists("/etc/systemd/system/msk_bot.service") else "vpn-bot"
+            threading.Thread(target=lambda: (time.sleep(1), subprocess.run(["sudo", "systemctl", "restart", service_name])), daemon=True).start()
             log_audit("RESTART_BOT_RU", admin_id=cfg.admin_id)
-            return {"ok": True, "msg": "Telegram бот на RU перезапускается (~2 сек)"}
+            return {"ok": True, "msg": "Telegram бот перезапускается (~2 сек)"}
         return {"ok": False, "msg": "Бот работает на RU"}
 
     elif action == "ping":
-        target_host = "150.251.154.180" if side == "SE" else "8.8.8.8"
+        target_host = (cfg.se_host or "1.1.1.1") if side == "SE" else "8.8.8.8"
         try:
             res = subprocess.run(["ping", "-c", "2", "-W", "2", target_host], capture_output=True, text=True)
             return {"ok": True, "msg": f"Пинг до {target_host}:\n" + (res.stdout or res.stderr)}
@@ -739,7 +751,7 @@ class BindPayload(BaseModel):
 def _clean_host(raw_host: str) -> str:
     """Очищает хост от alex@ и заменяет local на публичный IP."""
     if not raw_host or raw_host == "local":
-        return "150.251.154.96"
+        return cfg.se_host or cfg.ru_host or "127.0.0.1"
     return raw_host.split("@")[-1].strip()
 
 

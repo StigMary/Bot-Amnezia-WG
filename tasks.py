@@ -88,7 +88,7 @@ def collect_metrics(bot: "telebot.TeleBot") -> None:
                 _ru_down_alerted = True
                 msg = (
                     "🚨 *ВНИМАНИЕ: СЕРВЕР RU НЕДОСТУПЕН!*\n\n"
-                    "Сервер 🇷🇺 RU (`45.140.168.134`) не отвечает на запросы более 5 минут.\n"
+                    f"Сервер 🇷🇺 RU (`{cfg.ru_host or 'Remote Node'}`) не отвечает на запросы более 5 минут.\n"
                     "Трафик клиентов через RU-шлюз временно нарушен!"
                 )
                 with contextlib.suppress(Exception):
