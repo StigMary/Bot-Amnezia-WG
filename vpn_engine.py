@@ -31,7 +31,7 @@ def validate_vpn_ip(ip_str: str) -> bool:
 def sanitize_alias(text: str) -> str:
     """Ограничивает длину и удаляет Markdown-спецсимволы."""
     text = text.strip()[:30]
-    text = re.sub(r"[*_`\[\]()~>#+-=|{}.!\\]", "", text)
+    text = re.sub(r"[*_`\[\]()~>#+=|{}.!\\-]", "", text)
     return text or "Без имени"
 
 
@@ -231,14 +231,14 @@ def _poll_container(cont: dict, db_users: dict) -> tuple:
             user_data = {"alias": initial_alias, "speed_limit": "max"}
             try:
                 update_user_field(ip, "alias", initial_alias)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Speed sampler error: {e}")
         elif name_from_amnezia and (user_data["alias"] == "Новый пользователь" or not user_data["alias"]):
             user_data["alias"] = name_from_amnezia
             try:
                 update_user_field(ip, "alias", name_from_amnezia)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Speed sampler error: {e}")
 
         entries.append(
             {
@@ -275,7 +275,7 @@ def get_vpn_stats(force: bool = False) -> list[dict[str, Any]]:
     new_users: list[tuple] = []
 
     # Параллельный опрос всех контейнеров
-    with ThreadPoolExecutor(max_workers=len(cfg.vpn_containers)) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, len(cfg.vpn_containers))) as pool:
         futures = {pool.submit(_poll_container, cont, db_users): cont for cont in cfg.vpn_containers}
         for fut in as_completed(futures):
             try:
@@ -345,10 +345,10 @@ def apply_limit(ip: str, speed: str, server_alias: str) -> bool:
         # EGRESS (download клиента): HTB на root qdisc, ловит пакеты dst={ip}/32
         egress_cmd = (
             f"if ! tc qdisc show dev {iface} | grep -q htb; then "
-            f"tc qdisc add dev {iface} root handle 1: htb default 999 r2q 10 2>/dev/null || true; "
+            f"tc qdisc add dev {iface} root handle 1: htb default 9999 r2q 10 2>/dev/null || true; "
             f"fi; "
             f"tc class replace dev {iface} parent 1: classid 1:1 htb rate 1000mbit burst 500k cburst 500k quantum 200000 2>/dev/null || true; "
-            f"tc class replace dev {iface} parent 1:1 classid 1:999 htb rate 1000mbit ceil 1000mbit burst 500k cburst 500k quantum 200000 2>/dev/null || true; "
+            f"tc class replace dev {iface} parent 1:1 classid 1:9999 htb rate 1000mbit ceil 1000mbit burst 500k cburst 500k quantum 200000 2>/dev/null || true; "
             f"tc class replace dev {iface} parent 1:1 classid 1:{class_id} htb rate {rate} ceil {ceil} burst {burst} cburst {burst} quantum 25000; "
             f"if ! tc filter show dev {iface} 2>/dev/null | grep -q {hex_ip}; then "
             f"tc filter add dev {iface} protocol ip parent 1:0 prio 1 u32 match ip dst {ip}/32 flowid 1:{class_id}; "
@@ -601,8 +601,8 @@ def _start_speed_sampler():
                 with _active_lock:
                     _current_active_now = active_list
 
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Speed sampler error: {e}")
             time.sleep(3)
 
     t = threading.Thread(target=_loop, daemon=True, name="awg_speed_sampler")
@@ -635,8 +635,9 @@ def get_ru_monitor_data(force: bool = False) -> dict:
 
         # 2. Connection to SE
         conn_sw = 0
+        se_dst = cfg.se_host or "127.0.0.1"
         try:
-            out = subprocess.check_output(["ss", "-tnH", "state", "established", "dst", "150.251.154.180"], text=True)
+            out = subprocess.check_output(["ss", "-tnH", "state", "established", "dst", se_dst], text=True)
             conn_sw = len([l for l in out.strip().splitlines() if l.strip()])
         except Exception:
             pass
@@ -681,7 +682,7 @@ def get_ru_monitor_data(force: bool = False) -> dict:
 
 
 def check_and_restore_qos() -> None:
-    """????????? ??????? HTB-??????? ?? ????????. ???? ????????? ?????????????? ? ??????????????? QoS."""
+    """Проверяет наличие корневого HTB-шейпера на интерфейсах. Если сбросился — восстанавливает QoS."""
     try:
         from database import get_all_users
         users = get_all_users()
@@ -691,7 +692,6 @@ def check_and_restore_qos() -> None:
             if data.get("speed_limit", "max") != "max" and data.get("protocol")
         }
         for target in cfg.vpn_containers:
-            # ????????? ?????? ?? ???????, ??? ??????? ???? ???????????? ? ??????? ????????
             if target["alias"] not in servers_with_limits:
                 continue
             res = run_vpn_cmd(target, ["tc", "qdisc", "show", "dev", target["iface"]], capture=True, timeout=15)
@@ -717,7 +717,8 @@ def sync_db_with_vpn_peers() -> dict[str, Any]:
     successful_servers = set()
     for target in cfg.vpn_containers:
         try:
-            res = run_vpn_cmd(target, ["awg", "show", target["iface"], "allowed-ips"], capture=True, timeout=15)
+            wg = _wg_cmd(target)
+            res = run_vpn_cmd(target, [wg, "show", target["iface"], "allowed-ips"], capture=True, timeout=15)
             if res and res.returncode == 0 and res.stdout:
                 successful_servers.add(target["alias"])
                 for line in res.stdout.splitlines():

@@ -42,6 +42,12 @@ class Config:
     # --- Опциональные: второй (RU) сервер ---
     ru_host: str = field(default_factory=lambda: os.getenv("RU_HOST", ""))
     ru_ssh_port: str = field(default_factory=lambda: os.getenv("RU_SSH_PORT", "22"))
+    ru_user: str = field(default_factory=lambda: os.getenv("RU_USER", "root"))
+
+    # --- Опциональные: выходной (SE) сервер ---
+    se_host: str = field(default_factory=lambda: os.getenv("SE_HOST", ""))
+    se_ssh_port: str = field(default_factory=lambda: os.getenv("SE_SSH_PORT", "22"))
+    se_user: str = field(default_factory=lambda: os.getenv("SE_USER", "root"))
 
     # --- ID закрытой группы (для @group_member_only) ---
     group_chat_id: int = field(default_factory=lambda: int(os.getenv("GROUP_CHAT_ID", "0")))

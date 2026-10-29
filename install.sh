@@ -28,6 +28,16 @@ echo -e "\n${BLUE}📦 [1/5] Проверка и установка систем
 sudo apt update -y
 sudo apt install -y python3 python3-venv python3-pip git curl qrencode iproute2
 
+# Проверка наличия Docker
+if ! command -v docker &> /dev/null; then
+    echo -e "${YELLOW}⚠️ Docker не обнаружен! Устанавливаем официальный Docker...${NC}"
+    curl -fsSL https://get.docker.com | sh
+    sudo usermod -aG docker "$CURRENT_USER"
+    echo -e "${GREEN}✓ Docker установлен, пользователь $CURRENT_USER добавлен в группу docker${NC}"
+else
+    echo -e "${GREEN}✓ Docker уже установлен${NC}"
+fi
+
 # 3. Создание venv и установка Python библиотек
 echo -e "\n${BLUE}🐍 [2/5] Настройка виртуального окружения Python...${NC}"
 if [ ! -d "$SCRIPT_DIR/.venv" ]; then
@@ -52,7 +62,7 @@ else
     echo -e "${GREEN}✓ Файл .env уже существует${NC}"
 fi
 
-# 5. Создание systemd служб
+# 5. Создание systemd служб с харденингом безопасности
 echo -e "\n${BLUE}🔧 [4/5] Настройка системных служб Systemd...${NC}"
 
 # Служба бота
@@ -69,6 +79,8 @@ ExecStart=$SCRIPT_DIR/.venv/bin/python3 $SCRIPT_DIR/bot.py
 Restart=always
 RestartSec=5
 MemoryMax=400M
+NoNewPrivileges=true
+ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target
@@ -88,6 +100,8 @@ Environment=\"PYTHONPATH=$SCRIPT_DIR\"
 ExecStart=$SCRIPT_DIR/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
 Restart=always
 RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target
