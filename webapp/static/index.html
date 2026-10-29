@@ -1374,6 +1374,8 @@
         
         function openServerModal(side, displayName) {
             currentServerSide = decodeURIComponent(side);
+            if (currentServerSide.includes('RU')) currentServerSide = 'RU';
+            else if (currentServerSide.includes('SE')) currentServerSide = 'SE';
             const title = displayName || (currentServerSide === 'SE' ? '🇸🇪 SE Server (Main)' : (currentServerSide === 'RU' ? '🇷🇺 RU Server (Node)' : currentServerSide));
             document.getElementById('server-modal-title').innerText = title;
             document.getElementById('server-actions').innerHTML = `
