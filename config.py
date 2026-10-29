@@ -87,6 +87,20 @@ class Config:
     )
 
     @property
+    def admin_ids(self) -> list[int]:
+        """Список всех ID администраторов из ADMIN_IDS или ADMIN_ID."""
+        raw = os.getenv("ADMIN_IDS", "").strip()
+        if raw:
+            ids = []
+            for part in raw.split(","):
+                part = part.strip()
+                if part.isdigit():
+                    ids.append(int(part))
+            if ids:
+                return ids
+        return [self.admin_id] if self.admin_id else []
+
+    @property
     def vpn_containers(self) -> list[dict[str, Any]]:
         """Список всех подключенных VPN-нод/серверов.
         
