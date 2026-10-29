@@ -18,7 +18,7 @@ import schedule
 from pathlib import Path
 from config import cfg, logger
 from database import get_all_users, log_audit, update_user_field, log_server_stat, get_setting
-from vpn_engine import apply_limit, check_and_restore_qos, get_ru_metrics, get_ru_monitor_data
+from vpn_engine import apply_limit, check_and_restore_qos, get_node_metrics, get_ru_metrics, get_ru_monitor_data
 
 if TYPE_CHECKING:
     import telebot
@@ -33,66 +33,69 @@ _stat_last_se_time = 0.0
 _stat_last_ru_net = None
 _stat_last_ru_time = 0.0
 
-_ru_fail_count: int = 0
-_ru_down_alerted: bool = False
+_node_net_cache: dict[str, dict] = {}
+_node_fail_counts: dict[str, int] = {}
+_node_down_alerted: dict[str, bool] = {}
 
 def collect_metrics(bot: "telebot.TeleBot") -> None:
-    """Записывает CPU/RAM/Traffic в базу для истории (каждые 5 минут)."""
-    global _last_anomaly_alert, _stat_last_se_net, _stat_last_se_time, _stat_last_ru_net, _stat_last_ru_time, _ru_fail_count, _ru_down_alerted
+    """Записывает CPU/RAM/Traffic в базу для истории (каждые 5 минут) для всех нод."""
+    global _last_anomaly_alert, _node_net_cache, _node_fail_counts, _node_down_alerted
     try:
         now = time.time()
-        
-        # --- SE Server ---
-        cpu_se = psutil.cpu_percent(interval=1)
-        ram_se = psutil.virtual_memory().percent
-        net_se = psutil.net_io_counters()
-        
-        rx_se = tx_se = 0.0
-        if _stat_last_se_net and (now - _stat_last_se_time) > 0:
-            dt = now - _stat_last_se_time
-            rx_se = (net_se.bytes_recv - _stat_last_se_net.bytes_recv) / dt
-            tx_se = (net_se.bytes_sent - _stat_last_se_net.bytes_sent) / dt
-        _stat_last_se_net = net_se
-        _stat_last_se_time = now
-        
-        log_server_stat("SE", cpu_se, ram_se, rx_se, tx_se)
-        check_and_restore_qos()
+        for node in cfg.vpn_containers:
+            alias = node["alias"]
+            m = get_node_metrics(node)
+            if m:
+                if _node_down_alerted.get(alias):
+                    _node_down_alerted[alias] = False
+                    _node_fail_counts[alias] = 0
+                    msg = f"✅ *СВЯЗЬ С СЕРВЕРОМ ВОССТАНОВЛЕНА!*\n\nСервер *{alias}* снова в сети и отвечает штатно."
+                    with contextlib.suppress(Exception):
+                        bot.send_message(cfg.admin_id, msg, parse_mode="Markdown")
+                else:
+                    _node_fail_counts[alias] = 0
 
-        # --- RU Server ---
-        rf = get_ru_metrics()
-        if rf:
-            if _ru_down_alerted:
-                _ru_down_alerted = False
-                _ru_fail_count = 0
-                msg = "✅ *СВЯЗЬ С RU СЕРВЕРОМ ВОССТАНОВЛЕНА!*\n\nСервер 🇷🇺 RU снова в сети и отвечает штатно."
-                with contextlib.suppress(Exception):
-                    bot.send_message(cfg.admin_id, msg, parse_mode="Markdown")
+                try:
+                    cpu = float(m.get("cpu", 0))
+                except Exception:
+                    cpu = 0.0
+                try:
+                    ram = float(m.get("ram", 0))
+                except Exception:
+                    ram = 0.0
+
+                rx = tx = 0.0
+                last_net = _node_net_cache.get(alias)
+                if last_net and (now - last_net["time"]) > 0:
+                    dt = now - last_net["time"]
+                    rx = max(0.0, (m.get("net_recv", 0) - last_net["recv"]) / dt)
+                    tx = max(0.0, (m.get("net_sent", 0) - last_net["sent"]) / dt)
+                _node_net_cache[alias] = {
+                    "recv": m.get("net_recv", 0),
+                    "sent": m.get("net_sent", 0),
+                    "time": now,
+                }
+
+                log_server_stat(alias, cpu, ram, rx, tx)
+                # Сохраняем и под старыми ключами SE / RU для совместимости
+                if "SE" in alias:
+                    log_server_stat("SE", cpu, ram, rx, tx)
+                elif "RU" in alias:
+                    log_server_stat("RU", cpu, ram, rx, tx)
             else:
-                _ru_fail_count = 0
+                _node_fail_counts[alias] = _node_fail_counts.get(alias, 0) + 1
+                if _node_fail_counts[alias] >= 2 and not _node_down_alerted.get(alias):
+                    _node_down_alerted[alias] = True
+                    host_str = node.get("host") or "Remote"
+                    msg = (
+                        f"🚨 *ВНИМАНИЕ: СЕРВЕР НЕДОСТУПЕН!*\n\n"
+                        f"Сервер *{alias}* (`{host_str}`) не отвечает на запросы более 5 минут.\n"
+                        "Проверьте доступность хоста!"
+                    )
+                    with contextlib.suppress(Exception):
+                        bot.send_message(cfg.admin_id, msg, parse_mode="Markdown")
 
-            cpu_ru = float(rf.get("cpu", 0))
-            ram_ru = float(rf.get("ram", 0))
-            rx_ru = tx_ru = 0.0
-            
-            if _stat_last_ru_net and (now - _stat_last_ru_time) > 0:
-                dt = now - _stat_last_ru_time
-                rx_ru = (rf["net_recv"] - _stat_last_ru_net["net_recv"]) / dt
-                tx_ru = (rf["net_sent"] - _stat_last_ru_net["net_sent"]) / dt
-            _stat_last_ru_net = {"net_recv": rf["net_recv"], "net_sent": rf["net_sent"]}
-            _stat_last_ru_time = now
-            
-            log_server_stat("RU", cpu_ru, ram_ru, rx_ru, tx_ru)
-        else:
-            _ru_fail_count += 1
-            if _ru_fail_count >= 2 and not _ru_down_alerted:
-                _ru_down_alerted = True
-                msg = (
-                    "🚨 *ВНИМАНИЕ: СЕРВЕР RU НЕДОСТУПЕН!*\n\n"
-                    f"Сервер 🇷🇺 RU (`{cfg.ru_host or 'Remote Node'}`) не отвечает на запросы более 5 минут.\n"
-                    "Трафик клиентов через RU-шлюз временно нарушен!"
-                )
-                with contextlib.suppress(Exception):
-                    bot.send_message(cfg.admin_id, msg, parse_mode="Markdown")
+        check_and_restore_qos()
 
         # Проверка аномалий
         if now - _last_anomaly_alert >= 600:

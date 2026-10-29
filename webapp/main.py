@@ -63,6 +63,8 @@ from database import (
 from vpn_engine import (
     apply_limit,
     delete_peer,
+    get_node_metrics,
+    get_node_ping,
     get_ru_metrics,
     get_ru_monitor_data,
     get_ru_ping,
@@ -525,16 +527,49 @@ async def user_detail(ip: str, admin=Depends(require_admin)):
 
 @app.get("/api/servers")
 async def servers(admin=Depends(require_admin)):
-    se_data, _ = await asyncio.gather(_async_se_metrics(), asyncio.sleep(0))
-    ru_data = get_local_ru_metrics()
-    return {"se": se_data, "ru": ru_data}
+    loop = asyncio.get_event_loop()
+
+    def _fetch_nodes():
+        res = []
+        for c in cfg.vpn_containers:
+            m = get_node_metrics(c)
+            res.append({
+                "id": c.get("id") or c["alias"],
+                "name": c["alias"],
+                "alias": c["alias"],
+                "host": c["host"],
+                "port": c.get("port"),
+                "container": c["name"],
+                "online": bool(m),
+                "cpu": float(m["cpu"]) if m and m.get("cpu") else 0,
+                "ram": m.get("ram", 0) if m else 0,
+                "ram_used": m.get("ram_used", 0) if m else 0,
+                "ram_total": m.get("ram_total", 0) if m else 0,
+                "disk": m.get("disk", 0) if m else 0,
+                "uptime": m.get("uptime", "Офлайн") if m else "Офлайн",
+                "net_recv": m.get("net_recv", 0) if m else 0,
+                "net_sent": m.get("net_sent", 0) if m else 0,
+            })
+        return res
+
+    nodes_data = await loop.run_in_executor(None, _fetch_nodes)
+    se_data = next((n for n in nodes_data if "SE" in n["name"]), nodes_data[0] if nodes_data else None)
+    ru_data = next((n for n in nodes_data if "RU" in n["name"]), nodes_data[1] if len(nodes_data) > 1 else None)
+    return {
+        "servers": nodes_data,
+        "se": se_data,
+        "ru": ru_data,
+    }
 
 
 @app.get("/api/ping")
-async def ping(admin=Depends(require_admin)):
+async def ping(server: str = "", admin=Depends(require_admin)):
     hosts = ["8.8.8.8", "1.1.1.1", "77.88.8.8", "telegram.org", "instagram.com"]
     labels = ["Google", "Cloudflare", "Yandex", "Telegram", "Instagram"]
-    pings = get_ru_ping()
+    target = next((c for c in cfg.vpn_containers if c["alias"] == server or c.get("id") == server), None)
+    if not target:
+        target = next((c for c in cfg.vpn_containers if "RU" in c["alias"]), cfg.vpn_containers[0] if cfg.vpn_containers else None)
+    pings = get_node_ping(target) if target else []
     result = []
     for i, label in enumerate(labels):
         val = pings[i] if i < len(pings) else None
@@ -553,15 +588,16 @@ async def ru_monitor(admin=Depends(require_admin)):
     return data
 
 
-
-
-
 @app.get("/api/server/{side}/history")
 async def server_history(side: str, hours: int = 24, admin=Depends(require_admin)):
-    side = side.upper()
-    if side not in ("SE", "RU"):
-        raise HTTPException(status_code=400, detail="Invalid server side")
     history = get_server_history(side, hours)
+    if not history:
+        matched = next(
+            (c["alias"] for c in cfg.vpn_containers if side.upper() in c["alias"].upper() or c.get("id") == side),
+            None,
+        )
+        if matched:
+            history = get_server_history(matched, hours)
     return history
 
 
@@ -644,10 +680,14 @@ async def get_server_services_endpoint(side: str, admin=Depends(require_admin)):
 async def server_action(side: str, action: str, admin=Depends(require_admin)):
     import subprocess
     import threading
-    side = side.upper()
-    if side not in ["SE", "RU"]:
+
+    target = next(
+        (c for c in cfg.vpn_containers if c["alias"] == side or c.get("id") == side or side.upper() in c["alias"].upper()),
+        None,
+    )
+    if not target and side.upper() not in ["SE", "RU"]:
         raise HTTPException(status_code=400, detail="Unknown server")
-    
+
     if action not in ("restart_container", "reboot", "ping", "restart_xui", "restart_xray", "restart_bot"):
         raise HTTPException(status_code=400, detail="Unknown action")
 
@@ -658,15 +698,21 @@ async def server_action(side: str, action: str, admin=Depends(require_admin)):
     from vpn_engine import auto_apply_qos
 
     if action == "restart_container":
-        if side == "RU":
-            def _restart_ru_awg():
-                subprocess.run(["docker", "restart", "amnezia-awg2"])
+        if target:
+            def _restart_cont():
+                if target["host"] == "local":
+                    subprocess.run(["docker", "restart", target["name"]])
+                else:
+                    user = target.get("user") or "root"
+                    dest = f"{user}@{target['host']}" if user and "@" not in target["host"] else target["host"]
+                    subprocess.run(["ssh", "-p", str(target.get("port") or 22), "-o", "BatchMode=yes", dest, f"sudo docker restart {target['name']}"])
                 time.sleep(3)
                 auto_apply_qos()
-            threading.Thread(target=_restart_ru_awg, daemon=True).start()
-            log_audit("RESTART_RU_AWG", admin_id=cfg.admin_id)
-            return {"ok": True, "msg": "RU контейнер (AmneziaWG) перезапускается и восстанавливает QoS (займет ~5 сек)"}
-        elif side == "SE":
+
+            threading.Thread(target=_restart_cont, daemon=True).start()
+            log_audit(f"RESTART_CONTAINER_{target['name']}", admin_id=cfg.admin_id)
+            return {"ok": True, "msg": f"Контейнер {target['name']} на {target['alias']} перезапускается (~5 сек)"}
+        elif side.upper() == "SE":
             if not cfg.se_host:
                 return {"ok": False, "msg": "SE_HOST не настроен"}
             def _restart_se_xui():
@@ -679,17 +725,18 @@ async def server_action(side: str, action: str, admin=Depends(require_admin)):
             return {"ok": True, "msg": "Служба x-ui на SE перезапускается (займет ~3 сек)"}
 
     elif action == "reboot":
-        if side == "RU":
-            subprocess.Popen(["sudo", "reboot"])
-            log_audit("REBOOT_RU", admin_id=cfg.admin_id)
-            return {"ok": True, "msg": "RU сервер уходит в перезагрузку"}
-        elif side == "SE":
-            if not cfg.se_host:
-                return {"ok": False, "msg": "SE_HOST не настроен"}
-            subprocess.Popen([
-                "ssh", "-p", str(cfg.se_ssh_port), "-o", "BatchMode=yes",
-                f"{cfg.se_user}@{cfg.se_host}", "sudo reboot"
-            ])
+        if target:
+            if target["host"] == "local":
+                subprocess.Popen(["sudo", "reboot"])
+            else:
+                user = target.get("user") or "root"
+                dest = f"{user}@{target['host']}" if user and "@" not in target["host"] else target["host"]
+                subprocess.Popen([
+                    "ssh", "-p", str(target.get("port") or 22), "-o", "BatchMode=yes",
+                    dest, "sudo reboot"
+                ])
+            log_audit(f"REBOOT_{target['alias']}", admin_id=cfg.admin_id)
+            return {"ok": True, "msg": f"Сервер {target['alias']} уходит в перезагрузку"}
             log_audit("REBOOT_SE", admin_id=cfg.admin_id)
             return {"ok": True, "msg": "SE сервер уходит в перезагрузку"}
 

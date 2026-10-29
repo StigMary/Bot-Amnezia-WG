@@ -23,21 +23,11 @@
             <div class="stat-box"><div class="stat-value">-</div><div class="stat-label">Всего</div></div>
         </div>
 
-        <div class="card" onclick="openServerModal('SE')" style="cursor: pointer;">
-            <div class="card-header">🇸🇪 SE Server (Main) <span id="se-uptime" style="font-weight:normal; font-size:12px; color:var(--hint-color)"></span></div>
-            <div id="se-stats">
-                <div class="loading">Загрузка...</div>
+        <div id="servers-list">
+            <div class="card">
+                <div class="card-header">Загрузка серверов...</div>
+                <div class="loading">Опрос нод...</div>
             </div>
-            <div style="margin-top: 8px; font-size: 13px; color: var(--hint-color);" id="se-speed">⬇️ 0.00 Мбит/с | ⬆️ 0.00 Мбит/с</div>
-        </div>
-
-        <div class="card" onclick="openServerModal('RU')" style="cursor: pointer;">
-            <div class="card-header">🇷🇺 RU Server (Node) <span id="ru-uptime" style="font-weight:normal; font-size:12px; color:var(--hint-color)"></span></div>
-            <div id="ru-stats">
-                <div class="loading">Загрузка...</div>
-            </div>
-            <div style="margin-top: 8px; font-size: 13px; color: var(--hint-color);" id="ru-speed">⬇️ 0.00 Мбит/с | ⬆️ 0.00 Мбит/с</div>
-            <div id="ru-xray-row" style="margin-top: 8px; font-size: 12px; display:none;"></div>
         </div>
     </div>
 
@@ -907,104 +897,74 @@
 
             const srv = await apiCallSafe('/servers');
             if (srv) {
-                if (srv.se) {
-                    const cpuColor = getColor(srv.se.cpu);
-                    const ramColor = getColor(srv.se.ram);
-                    const diskColor = getColor(srv.se.disk);
-                    
-                    document.getElementById('se-stats').innerHTML = `
-                        <div class="dashboard-metrics">
-                            <div class="metric-card">
-                                ${getRingHtml(srv.se.cpu, cpuColor)}
-                                <div class="metric-label">CPU</div>
-                            </div>
-                            <div class="metric-card">
-                                ${getRingHtml(srv.se.ram, ramColor)}
-                                <div class="metric-label">RAM</div>
-                                <div class="metric-sub">${srv.se.ram_used} / ${srv.se.ram_total}G</div>
-                            </div>
-                            <div class="metric-card">
-                                ${getRingHtml(srv.se.disk, diskColor)}
-                                <div class="metric-label">DISK</div>
-                                <div class="metric-sub">${srv.se.disk_used} / ${srv.se.disk_total}G</div>
-                            </div>
-                        </div>
-                    `;
-                    
-                    if (srv.se.net_recv !== undefined) {
-                        let dt = lastNet.SE ? (Date.now() - lastNet.SE.time) / 1000 : 0;
-                        if (dt > 0) {
-                            let rx = (srv.se.net_recv - lastNet.SE.rx) / dt;
-                            let tx = (srv.se.net_sent - lastNet.SE.tx) / dt;
-                            document.getElementById('se-speed').innerHTML = `
-                                <div class="traffic-box">
-                                    <div class="traffic-item">
-                                        <div class="metric-label">↓ Скачивание</div>
-                                        <div class="traffic-val rx">${(rx*8/1024/1024).toFixed(2)} Мбит/с</div>
+                const serversListEl = document.getElementById('servers-list');
+                const servers = srv.servers && srv.servers.length ? srv.servers : [
+                    ...(srv.se ? [{...srv.se, alias: '🇸🇪 SE Server (Main)', id: 'SE'}] : []),
+                    ...(srv.ru ? [{...srv.ru, alias: '🇷🇺 RU Server (Node)', id: 'RU'}] : [])
+                ];
+
+                if (serversListEl && servers.length) {
+                    serversListEl.innerHTML = servers.map(s => {
+                        const cpuColor = getColor(s.cpu || 0);
+                        const ramColor = getColor(s.ram || 0);
+                        const diskColor = getColor(s.disk || 0);
+                        const sAlias = s.alias || s.name || 'Server';
+                        const sId = s.id || s.alias;
+                        const isOnline = s.online !== false;
+
+                        let speedHtml = '';
+                        if (s.net_recv !== undefined && isOnline) {
+                            let last = lastNet[sId];
+                            let dt = last ? (Date.now() - last.time) / 1000 : 0;
+                            if (dt > 0) {
+                                let rx = Math.max(0, (s.net_recv - last.rx) / dt);
+                                let tx = Math.max(0, (s.net_sent - last.tx) / dt);
+                                speedHtml = `
+                                    <div class="traffic-box" style="margin-top:8px;">
+                                        <div class="traffic-item">
+                                            <div class="metric-label">↓ Скачивание</div>
+                                            <div class="traffic-val rx">${(rx*8/1024/1024).toFixed(2)} Мбит/с</div>
+                                        </div>
+                                        <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.1)"></div>
+                                        <div class="traffic-item">
+                                            <div class="metric-label">↑ Отдача</div>
+                                            <div class="traffic-val tx">${(tx*8/1024/1024).toFixed(2)} Мбит/с</div>
+                                        </div>
                                     </div>
-                                    <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.1)"></div>
-                                    <div class="traffic-item">
-                                        <div class="metric-label">↑ Отдача</div>
-                                        <div class="traffic-val tx">${(tx*8/1024/1024).toFixed(2)} Мбит/с</div>
+                                `;
+                            }
+                            lastNet[sId] = { rx: s.net_recv, tx: s.net_sent, time: Date.now() };
+                        }
+
+                        return `
+                            <div class="card" onclick="openServerModal('${encodeURIComponent(sId)}', '${escapeHtml(sAlias)}')" style="cursor: pointer; margin-bottom: 12px;">
+                                <div class="card-header">
+                                    <span>${escapeHtml(sAlias)}</span>
+                                    <span style="font-weight:normal; font-size:12px; color:var(--hint-color)">
+                                        ${isOnline ? `• ${s.uptime || 'Онлайн'}` : '<span style="color:var(--danger)">🔴 Офлайн</span>'}
+                                    </span>
+                                </div>
+                                <div class="dashboard-metrics" style="margin-top:8px;">
+                                    <div class="metric-card">
+                                        ${getRingHtml(s.cpu || 0, cpuColor)}
+                                        <div class="metric-label">CPU</div>
+                                    </div>
+                                    <div class="metric-card">
+                                        ${getRingHtml(s.ram || 0, ramColor)}
+                                        <div class="metric-label">RAM</div>
+                                        <div class="metric-sub">${s.ram_used || 0} / ${s.ram_total || 0}G</div>
+                                    </div>
+                                    <div class="metric-card">
+                                        ${getRingHtml(s.disk || 0, diskColor)}
+                                        <div class="metric-label">DISK</div>
+                                        <div class="metric-sub">${s.disk || 0}%</div>
                                     </div>
                                 </div>
-                            `;
-                        } else {
-                            document.getElementById('se-speed').innerHTML = '';
-                        }
-                        lastNet.SE = { rx: srv.se.net_recv, tx: srv.se.net_sent, time: Date.now() };
-                    }
-                }
-                if (srv.ru) {
-                    const cpuColor = getColor(srv.ru.cpu);
-                    const ramColor = getColor(srv.ru.ram);
-                    const diskColor = getColor(srv.ru.disk);
-                    
-                    document.getElementById('ru-stats').innerHTML = `
-                        <div class="dashboard-metrics">
-                            <div class="metric-card">
-                                ${getRingHtml(srv.ru.cpu, cpuColor)}
-                                <div class="metric-label">CPU</div>
+                                ${speedHtml}
+                                ${sAlias.includes('RU') ? '<div id="ru-xray-row" style="margin-top: 8px; font-size: 12px; display:none;"></div>' : ''}
                             </div>
-                            <div class="metric-card">
-                                ${getRingHtml(srv.ru.ram, ramColor)}
-                                <div class="metric-label">RAM</div>
-                                <div class="metric-sub">${srv.ru.ram_used} / ${srv.ru.ram_total}G</div>
-                            </div>
-                            <div class="metric-card">
-                                ${getRingHtml(srv.ru.disk, diskColor)}
-                                <div class="metric-label">DISK</div>
-                                <div class="metric-sub">${srv.ru.disk_used} / ${srv.ru.disk_total}G</div>
-                            </div>
-                        </div>
-                    `;
-                    
-                    if (srv.ru.net_recv !== undefined) {
-                        let dt = lastNet.RU ? (Date.now() - lastNet.RU.time) / 1000 : 0;
-                        if (dt > 0) {
-                            let rx = (srv.ru.net_recv - lastNet.RU.rx) / dt;
-                            let tx = (srv.ru.net_sent - lastNet.RU.tx) / dt;
-                            document.getElementById('ru-speed').innerHTML = `
-                                <div class="traffic-box">
-                                    <div class="traffic-item">
-                                        <div class="metric-label">↓ Скачивание</div>
-                                        <div class="traffic-val rx">${(rx*8/1024/1024).toFixed(2)} Мбит/с</div>
-                                    </div>
-                                    <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.1)"></div>
-                                    <div class="traffic-item">
-                                        <div class="metric-label">↑ Отдача</div>
-                                        <div class="traffic-val tx">${(tx*8/1024/1024).toFixed(2)} Мбит/с</div>
-                                    </div>
-                                </div>
-                            `;
-                        } else {
-                            document.getElementById('ru-speed').innerHTML = '';
-                        }
-                        lastNet.RU = { rx: srv.ru.net_recv, tx: srv.ru.net_sent, time: Date.now() };
-                    }
-                } else {
-                    document.getElementById('ru-stats').innerHTML = `<div style="color:var(--danger)">Недоступен</div>`;
-                    document.getElementById('ru-speed').innerHTML = '';
+                        `;
+                    }).join('');
                 }
             }
         }
@@ -1379,9 +1339,10 @@
 
         let _ruMonitorData = null;
         
-        function openServerModal(side) {
-            currentServerSide = side;
-            document.getElementById('server-modal-title').innerText = side === 'SE' ? '🇸🇪 SE Server (Main)' : '🇷🇺 RU Server (Node)';
+        function openServerModal(side, displayName) {
+            currentServerSide = decodeURIComponent(side);
+            const title = displayName || (currentServerSide === 'SE' ? '🇸🇪 SE Server (Main)' : (currentServerSide === 'RU' ? '🇷🇺 RU Server (Node)' : currentServerSide));
+            document.getElementById('server-modal-title').innerText = title;
             document.getElementById('server-actions').innerHTML = `
                 <button class="btn btn-warning" onclick="doServerAction('restart_container', this)">🔄 Рестарт контейнера</button>
                 <button class="btn btn-secondary" onclick="doServerAction('ping', this)">🩺 Выполнить Пинг</button>
@@ -1389,7 +1350,7 @@
                 <button class="btn btn-secondary" onclick="openChartModal()" style="grid-column: span 1;">📊 График нагрузки (24ч)</button>
             `;
             const activitySection = document.getElementById('ru-activity-section');
-            if (side === 'RU') {
+            if (title.includes('RU')) {
                 activitySection.style.display = 'block';
                 _ruActiveTab = 'top';
                 document.getElementById('ru-tab-top').classList.add('active');
@@ -1403,7 +1364,7 @@
             } else {
                 activitySection.style.display = 'none';
             }
-            fetchServerServices(side);
+            fetchServerServices(currentServerSide);
             document.getElementById('server-modal').classList.add('active'); document.getElementById('modal-overlay').classList.add('active');
             tg.BackButton.show();
         }
@@ -1547,7 +1508,7 @@
                 if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred && !document.getElementById('chart-modal').classList.contains('active')) {
                     tg.HapticFeedback.impactOccurred('light');
                 }
-                const history = await apiCall(`/server/${currentServerSide}/history?hours=24`);
+                const history = await apiCall(`/server/${encodeURIComponent(currentServerSide)}/history?hours=24`);
                 if (!history) return;
                 
                 currentChartHistory = history;

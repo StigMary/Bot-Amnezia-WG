@@ -76,11 +76,12 @@ def run_vpn_cmd(
             ["sudo", "docker", "exec", shlex.quote(target["name"])] + escaped_cmd
         )
         remote_cmd = f"timeout {max(5, timeout - 2)} {remote_cmd}"
-
+        user = target.get("user") or "root"
+        dest = f"{user}@{target['host']}" if user and "@" not in target["host"] else target["host"]
         final_cmd = (
             ["ssh"]
             + _SSH_BASE_OPTS
-            + ["-p", str(target["port"]), target["host"], remote_cmd]
+            + ["-p", str(target.get("port") or 22), dest, remote_cmd]
         )
 
     try:
@@ -101,19 +102,21 @@ def run_ssh_cmd(
     port: str,
     remote_cmd: str,
     timeout: int = 15,
+    user: str = "root",
 ) -> str | None:
     """Выполняет произвольную команду на удалённом сервере по SSH."""
     remote_timeout = max(5, timeout - 2)
     safe_remote_cmd = f"timeout {remote_timeout} sh -c {shlex.quote(remote_cmd)}"
-    cmd = ["ssh"] + _SSH_BASE_OPTS + ["-p", str(port), host, safe_remote_cmd]
+    dest = f"{user}@{host}" if user and "@" not in host else host
+    cmd = ["ssh"] + _SSH_BASE_OPTS + ["-p", str(port), dest, safe_remote_cmd]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if res.returncode == 0:
             return res.stdout.strip()
     except subprocess.TimeoutExpired:
-        logger.warning(f"SSH таймаут: {host}:{port}")
+        logger.warning(f"SSH таймаут: {dest}:{port}")
     except Exception as e:
-        logger.error(f"SSH ошибка ({host}:{port}): {e}")
+        logger.error(f"SSH ошибка ({dest}:{port}): {e}")
     return None
 
 
@@ -430,10 +433,9 @@ def delete_peer(ip: str, server_alias: str = "") -> None:
 # ─── Мониторинг (метрики, графики, пинг) ─────────────────────────────────────
 
 
-def get_ru_metrics() -> dict[str, Any] | None:
-    """CPU, RAM, Uptime и счётчики сети с RU-сервера."""
-    ru = next((c for c in cfg.vpn_containers if "RU" in c["alias"]), None)
-    if not ru:
+def get_node_metrics(node: dict) -> dict[str, Any] | None:
+    """CPU, RAM, Uptime и счётчики сети с любого сервера (local или SSH)."""
+    if not node:
         return None
 
     remote_cmd = (
@@ -444,14 +446,15 @@ def get_ru_metrics() -> dict[str, Any] | None:
         "$(cat /proc/net/dev | awk '/eth0:/{print $2, $10}' || cat /proc/net/dev | tail -n +3 | awk '{recv += $2; sent += $10} END {print recv, sent}') "
         "$(df / | grep '/' | tail -1 | awk '{print $3, $2}')"
     )
-    if ru["host"] == "local":
+    if node.get("host") == "local":
         try:
             res = subprocess.run(remote_cmd, shell=True, capture_output=True, text=True, timeout=5)
             output = res.stdout.strip()
         except Exception:
             output = None
     else:
-        output = run_ssh_cmd(ru["host"], ru["port"], remote_cmd, timeout=10)
+        user = node.get("user") or "root"
+        output = run_ssh_cmd(node["host"], node.get("port") or "22", remote_cmd, timeout=10, user=user)
 
     if not output:
         return None
@@ -464,11 +467,11 @@ def get_ru_metrics() -> dict[str, Any] | None:
         h = int(float(data[3]) // 3600)
         m = int((float(data[3]) % 3600) // 60)
         uptime_str = f"{h // 24}д {h % 24}ч {m}м" if h >= 24 else f"{h}ч {m}м"
-        
+
         ram_used = round(int(data[1]) / (1024 * 1024), 1)
         ram_total = round(int(data[2]) / (1024 * 1024), 1)
         ram_pct = round((ram_used / ram_total) * 100, 1) if ram_total > 0 else 0
-        
+
         disk_used = round(int(data[6]) / (1024 * 1024), 1)
         disk_total = round(int(data[7]) / (1024 * 1024), 1)
         disk_pct = round((disk_used / disk_total) * 100, 1) if disk_total > 0 else 0
@@ -483,17 +486,22 @@ def get_ru_metrics() -> dict[str, Any] | None:
             "net_sent": int(data[5]),
             "disk": disk_pct,
             "disk_used": disk_used,
-            "disk_total": disk_total
+            "disk_total": disk_total,
         }
     except Exception as e:
-        logger.error(f"Ошибка парсинга RU метрик: {e}")
+        logger.error(f"Ошибка парсинга метрик ноды {node.get('alias')}: {e}")
         return None
 
 
-def get_ru_ping() -> list:
-    """Пингует сервисы с RU-сервера."""
-    ru = next((c for c in cfg.vpn_containers if "RU" in c["alias"]), None)
-    if not ru:
+def get_ru_metrics() -> dict[str, Any] | None:
+    """Обратная совместимость: возвращает метрики RU-сервера."""
+    ru = next((c for c in cfg.vpn_containers if "RU" in c["alias"]), cfg.vpn_containers[0] if cfg.vpn_containers else None)
+    return get_node_metrics(ru) if ru else None
+
+
+def get_node_ping(node: dict) -> list[str]:
+    """Пингует сервисы с указанного сервера."""
+    if not node:
         return []
 
     remote_cmd = (
@@ -502,16 +510,23 @@ def get_ru_ping() -> list:
         'if [ -z "$val" ]; then echo "timeout"; else echo "$val"; fi; '
         "done"
     )
-    if ru["host"] == "local":
+    if node.get("host") == "local":
         try:
             res = subprocess.run(remote_cmd, shell=True, capture_output=True, text=True, timeout=8)
             output = res.stdout.strip()
         except Exception:
             output = ""
     else:
-        output = run_ssh_cmd(ru["host"], ru["port"], remote_cmd, timeout=10)
+        user = node.get("user") or "root"
+        output = run_ssh_cmd(node["host"], node.get("port") or "22", remote_cmd, timeout=10, user=user)
 
     return output.split("\n") if output else []
+
+
+def get_ru_ping() -> list:
+    """Обратная совместимость: пинг с RU сервера."""
+    ru = next((c for c in cfg.vpn_containers if "RU" in c["alias"]), cfg.vpn_containers[0] if cfg.vpn_containers else None)
+    return get_node_ping(ru) if ru else []
 
 
 # ─── Мониторинг RU: живой замер скорости (дельта) ─────────────────────────────
