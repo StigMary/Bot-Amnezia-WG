@@ -59,6 +59,13 @@ def main():
     admin_handler.register(bot)
     client_handler.register(bot)
 
+    with contextlib.suppress(Exception):
+        from telebot.types import BotCommand
+        bot.set_my_commands([
+            BotCommand("start", "Панель управления"),
+            BotCommand("backup", "Скачать бэкап базы данных"),
+        ])
+
     # Сигналы завершения
     signal.signal(signal.SIGTERM, lambda s, f: graceful_shutdown(bot, s, f))
     signal.signal(signal.SIGINT, lambda s, f: graceful_shutdown(bot, s, f))
