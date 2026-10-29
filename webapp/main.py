@@ -531,12 +531,43 @@ async def servers(admin=Depends(require_admin)):
 
     def _fetch_nodes():
         res = []
+        if cfg.se_host:
+            se_node = {
+                "id": "SE",
+                "name": "🇸🇪 SE Server (Main)",
+                "alias": "🇸🇪 SE Server (Main)",
+                "host": cfg.se_host,
+                "port": cfg.se_ssh_port,
+                "user": cfg.se_user,
+                "container": "xray",
+            }
+            m = get_node_metrics(se_node)
+            res.append({
+                "id": "SE",
+                "name": "🇸🇪 SE Server (Main)",
+                "alias": "🇸🇪 SE Server (Main)",
+                "host": cfg.se_host,
+                "port": cfg.se_ssh_port,
+                "container": "xray",
+                "online": bool(m),
+                "cpu": float(m["cpu"]) if m and m.get("cpu") else 0,
+                "ram": m.get("ram", 0) if m else 0,
+                "ram_used": m.get("ram_used", 0) if m else 0,
+                "ram_total": m.get("ram_total", 0) if m else 0,
+                "disk": m.get("disk", 0) if m else 0,
+                "uptime": m.get("uptime", "Офлайн") if m else "Офлайн",
+                "net_recv": m.get("net_recv", 0) if m else 0,
+                "net_sent": m.get("net_sent", 0) if m else 0,
+            })
+
         for c in cfg.vpn_containers:
             m = get_node_metrics(c)
+            alias = c.get("alias", "Server")
+            c_id = c.get("id") or ("RU" if "RU" in alias.upper() else alias)
             res.append({
-                "id": c.get("id") or c["alias"],
-                "name": c["alias"],
-                "alias": c["alias"],
+                "id": c_id,
+                "name": alias,
+                "alias": alias,
                 "host": c["host"],
                 "port": c.get("port"),
                 "container": c["name"],
@@ -621,9 +652,9 @@ def _check_dangerous_cooldown(action_key: str) -> bool:
 @app.get("/api/server/{side}/services")
 async def get_server_services_endpoint(side: str, admin=Depends(require_admin)):
     import subprocess
-    side = side.upper()
+    side_u = side.upper()
     services = []
-    if side == "RU":
+    if side_u == "RU" or "RU" in side_u:
         # Docker: amnezia-awg2
         try:
             st = subprocess.check_output(["docker", "inspect", "--format", "{{.State.Status}}", "amnezia-awg2"], text=True).strip()
@@ -652,7 +683,7 @@ async def get_server_services_endpoint(side: str, admin=Depends(require_admin)):
         except Exception:
             services.append({"name": "Cloudflare Tunnel", "status": "inactive", "action": None, "action_label": None})
 
-    elif side == "SE":
+    elif side_u == "SE" or "SE" in side_u:
         try:
             if not cfg.se_host:
                 services.append({"name": "Службы SE", "status": "не настроен SE_HOST", "action": None, "action_label": None})
