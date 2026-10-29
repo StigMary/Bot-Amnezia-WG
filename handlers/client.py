@@ -99,7 +99,7 @@ def _get_inline_menu():
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(InlineKeyboardButton("💳 Оплатить / Продлить", callback_data="client_pay"))
     markup.add(
-        InlineKeyboardButton("➕ Запросить устр-во", callback_data="client_req_device"),
+        InlineKeyboardButton("➕ Запросить устр-во (Скоро)", callback_data="client_req_device"),
         InlineKeyboardButton("✏️ Переименовать", callback_data="client_rename_list"),
     )
     markup.add(
@@ -433,38 +433,11 @@ def register(bot: telebot.TeleBot):
     # ── Запрос нового устройства ─────────────────────────────────────────────
     @bot.callback_query_handler(func=lambda c: c.data == "client_req_device")
     def cb_req_device(call):
-        uid = call.from_user.id
-        devices = get_devices_by_tg_id(uid)
-
-        if len(devices) >= 2:
-            bot.answer_callback_query(
-                call.id, "❌ У вас уже есть максимально доступные 2 конфигурации!", show_alert=True
-            )
-            return
-
-        bot.answer_callback_query(call.id, "Заявка отправлена!")
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton(
-                "💬 Ответить (Отправить конфиг)", callback_data=f"admin_reply_ticket|{call.from_user.id}"
-            )
-        )
-
-        bot.send_message(
-            cfg.admin_id,
-            f"📩 <b>Новая заявка на устройство!</b>\n\n"
-            f"👤 Клиент: @{call.from_user.username or call.from_user.first_name}\n"
-            f"🆔 TG ID: <code>{call.from_user.id}</code>\n\n"
-            f"<i>(Сгенерируйте конфиг и отправьте клиенту вручную)</i>",
-            parse_mode="HTML",
-            reply_markup=markup,
-        )
-        bot.send_message(
-            call.message.chat.id,
-            "✅ <b>Заявка принята!</b>\n\n"
-            "⚠️ <i>Обратите внимание: на один аккаунт допускается максимум <b>две конфигурации (два устройства)</b>.</i>\n\n"
-            "Администратор подготовит файл конфигурации для нового устройства и пришлет его вам в этот чат.",
-            parse_mode="HTML",
+        bot.answer_callback_query(
+            call.id,
+            "⏳ Функция автоматического выпуска новых конфигураций находится в разработке.\n\n"
+            "Для подключения дополнительного устройства обратитесь в поддержку.",
+            show_alert=True,
         )
 
     # ── Переименование устройства ─────────────────────────────────────────────
