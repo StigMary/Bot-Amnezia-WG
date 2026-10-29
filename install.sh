@@ -57,9 +57,17 @@ chmod 700 "$SCRIPT_DIR/data"
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
     cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
     chmod 600 "$SCRIPT_DIR/.env"
-    echo -e "${YELLOW}⚠️ Создан файл .env из шаблона. ОБЯЗАТЕЛЬНО укажите в нем BOT_TOKEN и ADMIN_ID!${NC}"
+    echo -e "${YELLOW}⚙️ Файл .env создан из шаблона.${NC}"
+    read -p "Хотите пройти пошаговую настройку токена и серверов прямо сейчас? (Y/n): " RUN_SETUP
+    RUN_SETUP=${RUN_SETUP:-y}
+    if [[ "$RUN_SETUP" =~ ^[YyДд]$ ]]; then
+        "$SCRIPT_DIR/.venv/bin/python3" "$SCRIPT_DIR/manage.py" setup
+    else
+        echo -e "${YELLOW}⚠️ Настройте .env вручную перед запуском, либо выполните: python3 manage.py setup${NC}"
+    fi
 else
     echo -e "${GREEN}✓ Файл .env уже существует${NC}"
+    echo -e "${BLUE}💡 Для управления серверами используйте:${NC} python3 manage.py add-node"
 fi
 
 # 5. Создание systemd служб с харденингом безопасности

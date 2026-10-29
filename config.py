@@ -88,34 +88,98 @@ class Config:
 
     @property
     def vpn_containers(self) -> list[dict[str, Any]]:
-        """Список VPN-контейнеров. Настраивается через .env."""
+        """Список всех подключенных VPN-нод/серверов.
+        
+        Поддерживает:
+        1. Декларативные ноды: NODE_1="ИМЯ|local(или IP)|PORT|USER|CONTAINER|IFACE"
+        2. Либо переменные: NODE_1_NAME, NODE_1_HOST, NODE_1_PORT, ...
+        3. Легаси-переменные: VPN_CONTAINER_1..3, RU_HOST, SE_HOST (полная обратная совместимость).
+        """
+        nodes = []
+        seen = set()
+
+        # 1. Поиск динамических нод NODE_1, NODE_2, ... до 20
+        for i in range(1, 21):
+            prefix = f"NODE_{i}"
+            val = os.getenv(prefix)
+            name_val = os.getenv(f"{prefix}_NAME")
+            if not val and not name_val:
+                continue
+
+            if val and "|" in val:
+                parts = [p.strip() for p in val.split("|")]
+                alias = parts[0] if len(parts) > 0 and parts[0] else f"Node {i}"
+                host = parts[1] if len(parts) > 1 and parts[1] else "local"
+                port = parts[2] if len(parts) > 2 and parts[2] not in ("-", "", "none", "local") else "22"
+                user = parts[3] if len(parts) > 3 and parts[3] not in ("-", "", "none") else "root"
+                container = parts[4] if len(parts) > 4 and parts[4] else "amnezia-awg2"
+                iface = parts[5] if len(parts) > 5 and parts[5] else "awg0"
+            else:
+                alias = os.getenv(f"{prefix}_NAME", val or f"Node {i}")
+                host = os.getenv(f"{prefix}_HOST", "local")
+                port = os.getenv(f"{prefix}_PORT", "22")
+                user = os.getenv(f"{prefix}_USER", "root")
+                container = os.getenv(f"{prefix}_CONTAINER", "amnezia-awg2")
+                iface = os.getenv(f"{prefix}_IFACE", "awg0")
+
+            if host == "local":
+                port = None
+
+            key = (host, container)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            nodes.append({
+                "id": f"node_{i}",
+                "name": container,
+                "container": container,
+                "iface": iface,
+                "alias": alias,
+                "host": host,
+                "port": port,
+                "user": user,
+            })
+
+        if nodes:
+            return nodes
+
+        # 2. Обратная совместимость с легаси .env
         container1 = os.getenv("VPN_CONTAINER_1", "amnezia-awg2")
         container2 = os.getenv("VPN_CONTAINER_2", "")
         container3 = os.getenv("VPN_CONTAINER_3", "")
         specs = [
             {
+                "id": "node_1",
                 "name": container1,
+                "container": container1,
                 "iface": "awg0",
                 "alias": os.getenv("VPN_ALIAS_1", "🇸🇪 SE Server (Main)"),
                 "host": "local",
                 "port": None,
+                "user": self.se_user or "root",
             },
             {
+                "id": "node_2",
                 "name": container2,
+                "container": container2,
                 "iface": "awg0",
                 "alias": os.getenv("VPN_ALIAS_2", ""),
                 "host": "local",
                 "port": None,
+                "user": "root",
             },
             {
+                "id": "node_3",
                 "name": container3,
+                "container": container3,
                 "iface": "awg0",
                 "alias": os.getenv("VPN_ALIAS_3", "🇷🇺 RU Server (Node)"),
                 "host": self.ru_host,
                 "port": self.ru_ssh_port,
+                "user": self.ru_user or "root",
             },
         ]
-        seen = set()
         result = []
         for spec in specs:
             key = (spec["host"], (spec["name"] or "").strip())
