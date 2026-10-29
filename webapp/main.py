@@ -381,12 +381,14 @@ async def users_list(admin=Depends(require_admin)):
     stats = await _async_vpn_stats()
     db = get_all_users()
     result = []
-    seen_peers = set()
+    seen_ips = set()
 
     for u in stats:
         ip = u.get("ip")
+        if not ip:
+            continue
+        seen_ips.add(ip)
         server_alias = u.get("server_alias") or "Неизвестно"
-        seen_peers.add((ip, server_alias))
 
         db_data = db.get(ip, {})
         alias = db_data.get("alias") or u.get("db_alias") or "Новый пользователь"
@@ -432,9 +434,10 @@ async def users_list(admin=Depends(require_admin)):
 
     # Добавляем пользователей из БД, которых ещё нет в списке
     for ip, db_data in db.items():
-        server_alias = db_data.get("protocol") or "Неизвестно"
-        if (ip, server_alias) in seen_peers:
+        if ip in seen_ips:
             continue
+        seen_ips.add(ip)
+        server_alias = db_data.get("protocol") or "Неизвестно"
         paid = db_data.get("paid_until", "")
         paid_display = ""
         days_left = None

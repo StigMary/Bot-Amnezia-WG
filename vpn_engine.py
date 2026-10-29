@@ -231,17 +231,25 @@ def _poll_container(cont: dict, db_users: dict) -> tuple:
         if not user_data:
             initial_alias = name_from_amnezia or "Новый пользователь"
             new_users.append((ip, cont["alias"]))
-            user_data = {"alias": initial_alias, "speed_limit": "max"}
+            user_data = {"alias": initial_alias, "speed_limit": "max", "protocol": cont["alias"]}
             try:
                 update_user_field(ip, "alias", initial_alias)
+                update_user_field(ip, "protocol", cont["alias"])
             except Exception as e:
-                logger.debug(f"Speed sampler error: {e}")
-        elif name_from_amnezia and (user_data["alias"] == "Новый пользователь" or not user_data["alias"]):
-            user_data["alias"] = name_from_amnezia
-            try:
-                update_user_field(ip, "alias", name_from_amnezia)
-            except Exception as e:
-                logger.debug(f"Speed sampler error: {e}")
+                logger.debug(f"User field update error: {e}")
+        else:
+            if not user_data.get("protocol"):
+                try:
+                    update_user_field(ip, "protocol", cont["alias"])
+                    user_data["protocol"] = cont["alias"]
+                except Exception as e:
+                    logger.debug(f"Protocol field update error: {e}")
+            if name_from_amnezia and (user_data.get("alias") == "Новый пользователь" or not user_data.get("alias")):
+                user_data["alias"] = name_from_amnezia
+                try:
+                    update_user_field(ip, "alias", name_from_amnezia)
+                except Exception as e:
+                    logger.debug(f"Alias field update error: {e}")
 
         entries.append(
             {
@@ -397,28 +405,29 @@ def auto_apply_qos() -> None:
     logger.info(f"QoS-лимиты применены: {applied}/{len(users)}")
 
 
-def delete_peer(ip: str, server_alias: str) -> None:
+def delete_peer(ip: str, server_alias: str = "") -> None:
     """Удаляет пира из WireGuard-интерфейса и сохраняет конфиг."""
     target = next((c for c in cfg.vpn_containers if c["alias"] == server_alias), None)
-    if not target:
-        return
+    # Если сервер не указан или не найден, ищем пира по всем контейнерам
+    targets = [target] if target else list(cfg.vpn_containers)
 
-    wg = _wg_cmd(target)
-    iface = _wg_iface(target)
+    for t in targets:
+        wg = _wg_cmd(t)
+        iface = _wg_iface(t)
 
-    res = run_vpn_cmd(target, [wg, "show", iface, "dump"])
-    if not res or not res.stdout:
-        return
+        res = run_vpn_cmd(t, [wg, "show", iface, "dump"])
+        if not res or not res.stdout:
+            continue
 
-    pub_key = None
-    for line in res.stdout.split("\n"):
-        if f"{ip}/32" in line:
-            pub_key = line.split("\t")[0]
-            break
+        pub_key = None
+        for line in res.stdout.split("\n"):
+            if f"{ip}/32" in line:
+                pub_key = line.split("\t")[0]
+                break
 
-    if pub_key:
-        run_vpn_cmd(target, [wg, "set", iface, "peer", pub_key, "remove"])
-        run_vpn_cmd(target, [f"{wg}-quick", "save", iface])
+        if pub_key:
+            run_vpn_cmd(t, [wg, "set", iface, "peer", pub_key, "remove"])
+            run_vpn_cmd(t, [f"{wg}-quick", "save", iface])
 
 
 # ─── Мониторинг (метрики, графики, пинг) ─────────────────────────────────────

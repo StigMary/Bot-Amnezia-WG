@@ -358,9 +358,14 @@ def update_user_field(ip: str, field: str, value: Any) -> bool:
 
 
 def upsert_users_batch(pairs: list[tuple[str, str]]) -> None:
-    """Массовое добавление пользователей (ip, protocol) без затирания существующих."""
+    """Массовое добавление пользователей (ip, protocol) с обновлением protocol если он пуст."""
     with get_conn() as conn:
-        conn.executemany("INSERT OR IGNORE INTO users (ip_address, protocol) VALUES (?, ?)", pairs)
+        conn.executemany(
+            "INSERT INTO users (ip_address, protocol) VALUES (?, ?) "
+            "ON CONFLICT(ip_address) DO UPDATE SET protocol = excluded.protocol "
+            "WHERE users.protocol IS NULL OR users.protocol = ''",
+            pairs,
+        )
 
 
 def delete_user(ip: str) -> None:
