@@ -528,6 +528,35 @@ async def servers(admin=Depends(require_admin)):
 
     def _fetch_nodes():
         res = []
+        if cfg.se_host:
+            se_node = {
+                "id": "SE",
+                "name": "🇸🇪 SE Server (Main)",
+                "alias": "🇸🇪 SE Server (Main)",
+                "host": cfg.se_host,
+                "port": cfg.se_ssh_port,
+                "user": cfg.se_user,
+                "container": "xray",
+            }
+            m = get_node_metrics(se_node)
+            res.append({
+                "id": "SE",
+                "name": "🇸🇪 SE Server (Main)",
+                "alias": "🇸🇪 SE Server (Main)",
+                "host": cfg.se_host,
+                "port": cfg.se_ssh_port,
+                "container": "xray",
+                "online": bool(m),
+                "cpu": float(m["cpu"]) if m and m.get("cpu") else 0,
+                "ram": m.get("ram", 0) if m else 0,
+                "ram_used": m.get("ram_used", 0) if m else 0,
+                "ram_total": m.get("ram_total", 0) if m else 0,
+                "disk": m.get("disk", 0) if m else 0,
+                "uptime": m.get("uptime", "Офлайн") if m else "Офлайн",
+                "net_recv": m.get("net_recv", 0) if m else 0,
+                "net_sent": m.get("net_sent", 0) if m else 0,
+            })
+
         for c in cfg.vpn_containers:
             m = get_node_metrics(c)
             res.append({

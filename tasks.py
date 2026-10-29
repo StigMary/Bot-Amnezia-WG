@@ -42,7 +42,16 @@ def collect_metrics(bot: "telebot.TeleBot") -> None:
     global _last_anomaly_alert, _node_net_cache, _node_fail_counts, _node_down_alerted
     try:
         now = time.time()
-        for node in cfg.vpn_containers:
+        targets = list(cfg.vpn_containers)
+        if cfg.se_host and not any(cfg.se_host in (n.get("host") or "") for n in targets):
+            targets.append({
+                "alias": "🇸🇪 SE Server (Main)",
+                "host": cfg.se_host,
+                "port": cfg.se_ssh_port,
+                "user": cfg.se_user,
+            })
+
+        for node in targets:
             alias = node["alias"]
             m = get_node_metrics(node)
             if m:
