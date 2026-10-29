@@ -39,6 +39,14 @@ class Config:
     admin_id: int = field(default_factory=lambda: int(_require("ADMIN_ID")))
     admin_api_key: str = field(default_factory=lambda: os.getenv("ADMIN_API_KEY", ""))
 
+    @property
+    def admin_ids(self) -> list[int]:
+        """Список ID администраторов."""
+        raw = os.getenv("ADMIN_IDS", "")
+        if raw:
+            return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+        return [self.admin_id] if self.admin_id else []
+
     # --- Опциональные: второй (RU) сервер ---
     ru_host: str = field(default_factory=lambda: os.getenv("RU_HOST", ""))
     ru_ssh_port: str = field(default_factory=lambda: os.getenv("RU_SSH_PORT", "22"))

@@ -94,13 +94,15 @@ def collect_metrics(bot: "telebot.TeleBot") -> None:
                 with contextlib.suppress(Exception):
                     bot.send_message(cfg.admin_id, msg, parse_mode="Markdown")
 
-        # Проверка аномалий
+        # Проверка аномалий локального сервера
         if now - _last_anomaly_alert >= 600:
             alerts = []
             cpu_thresh = float(get_setting("anomaly_cpu_threshold", cfg.anomaly_cpu_threshold))
             ram_thresh = float(get_setting("anomaly_ram_threshold", cfg.anomaly_ram_threshold))
-            
-            if cpu_se > cpu_thresh:
+            local_cpu = psutil.cpu_percent(interval=None)
+            local_ram = psutil.virtual_memory().percent
+
+            if local_cpu > cpu_thresh:
                 # Защита от ложных срабатываний: перепроверяем через 3 сек, чтобы отсеять 1-секундные всплески (cron, apt)
                 time.sleep(3)
                 cpu_confirm = psutil.cpu_percent(interval=2)
@@ -109,12 +111,12 @@ def collect_metrics(bot: "telebot.TeleBot") -> None:
                 if cpu_confirm > cpu_thresh or (load1 / num_cpus * 100) > cpu_thresh:
                     alerts.append(f"🔥 CPU: {cpu_confirm:.1f}% (LA: {load1:.2f}, порог: {cpu_thresh}%)")
                 else:
-                    logger.info(f"Игнорирован кратковременный всплеск CPU: {cpu_se}% -> {cpu_confirm}% (LA: {load1:.2f})")
-            if ram_se > ram_thresh:
-                alerts.append(f"💾 RAM: {ram_se}% (порог: {ram_thresh}%)")
+                    logger.info(f"Игнорирован кратковременный всплеск CPU: {local_cpu}% -> {cpu_confirm}% (LA: {load1:.2f})")
+            if local_ram > ram_thresh:
+                alerts.append(f"💾 RAM: {local_ram}% (порог: {ram_thresh}%)")
             if alerts:
                 _last_anomaly_alert = now
-                msg = "🚨 *АНОМАЛИЯ НА SE СЕРВЕРЕ!*\n\n" + "\n".join(alerts)
+                msg = "🚨 *АНОМАЛИЯ НА СЕРВЕРЕ!*\n\n" + "\n".join(alerts)
                 with contextlib.suppress(Exception):
                     bot.send_message(cfg.admin_id, msg, parse_mode="Markdown")
 
