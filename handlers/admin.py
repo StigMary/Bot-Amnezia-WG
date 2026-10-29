@@ -219,7 +219,7 @@ def register(bot: telebot.TeleBot):
         import datetime as _dt2
         _now2 = _dt2.datetime.now().strftime("%d.%m.%Y  %H:%M")
         _dash2 = (
-            "👑 *KJZNNETx Admin Panel*\n"
+            f"👑 *{cfg.project_name} Admin Panel*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"🟢 Онлайн: *{_online2}*  |  👥 Всего: *{_total2}*\n"
             f"🇸🇪 SE: 🖥 {_cpu_se2:.0f}%  💾 {_ram_se2:.0f}%\n"

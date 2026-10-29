@@ -78,6 +78,14 @@ class Config:
     billing_warn_days: int = 3  # За сколько дней предупреждать
     billing_critical_days: int = 1  # "Завтра последний день"
 
+    # --- Проект и бренд ---
+    project_name: str = field(
+        default_factory=lambda: os.getenv("PROJECT_NAME", "KznNET")
+    )
+    payment_bank: str = field(
+        default_factory=lambda: os.getenv("PAYMENT_BANK", "Т-Банк")
+    )
+
     # --- Реквизиты оплаты (показываются клиентам) ---
     payment_details: str = field(
         default_factory=lambda: os.getenv("PAYMENT_DETAILS", "Укажите реквизиты в .env (PAYMENT_DETAILS)")
