@@ -8,17 +8,25 @@
 
 <div align="center">
 
-| 📱 Главный Дашборд WebApp | 👥 Управление абонентами |
+| 🤖 Telegram Бот (`/start`) | 📱 Главный Дашборд WebApp |
 |:---:|:---:|
-| <img src="docs/screenshots/02_dashboard.png" width="380" alt="Dashboard" /> | <img src="docs/screenshots/03_subscribers.png" width="380" alt="Subscribers" /> |
+| <img src="docs/screenshots/01_telegram_bot.png" width="380" alt="Telegram Bot" /> | <img src="docs/screenshots/02_dashboard.png" width="380" alt="Dashboard" /> |
 
-| ⚙️ Управление службами и нодами | 📊 График нагрузки 24ч (Chart.js) |
+| 👥 Список абонентов с фильтрами | ⚙️ Управление службами узла |
 |:---:|:---:|
-| <img src="docs/screenshots/04_server_control.png" width="380" alt="Server Control" /> | <img src="docs/screenshots/05_chart_24h.png" width="380" alt="Load Chart" /> |
+| <img src="docs/screenshots/03_subscribers.png" width="380" alt="Subscribers" /> | <img src="docs/screenshots/04_server_control.png" width="380" alt="Server Control" /> |
 
-| 🤖 Telegram Бот (/start) | ✨ Создание абонента и выбор ноды |
+| 📊 График нагрузки 24ч (Chart.js) | ✨ Создание абонента (выбор ноды) |
 |:---:|:---:|
-| <img src="docs/screenshots/01_telegram_bot.png" width="380" alt="Telegram Bot" /> | <img src="docs/screenshots/06_create_user.png" width="380" alt="Create User" /> |
+| <img src="docs/screenshots/05_chart_24h.png" width="380" alt="Load Chart" /> | <img src="docs/screenshots/06_create_user.png" width="380" alt="Create User" /> |
+
+| 👤 Карточка абонента и QoS-шейпер | 💬 Техподдержка (Тикеты) |
+|:---:|:---:|
+| <img src="docs/screenshots/07_user_card.png" width="380" alt="User Card" /> | <img src="docs/screenshots/08_tickets.png" width="380" alt="Tickets" /> |
+
+| 📢 Массовая рассылка | ⚙️ Системные настройки и бэкап |
+|:---:|:---:|
+| <img src="docs/screenshots/09_broadcast.png" width="380" alt="Broadcast" /> | <img src="docs/screenshots/10_settings.png" width="380" alt="Settings" /> |
 
 </div>
 
@@ -27,7 +35,7 @@
 ## 🌟 Основные возможности
 
 * 📱 **Интерактивный WebApp Дашборд:** Графика нагрузки серверов (CPU, RAM, диск, сетевая активность в реальном времени), детальная статистика по клиентам, управление ключами и тарифами в 1 клик.
-* 🌐 **Многосерверная архитектура (SE + RU):** Поддержка локальных контейнеров и удалённых нод через защищённые SSH ControlMaster соединения с автоматическим переиспользованием сокетов.
+* 🌐 **Многосерверная архитектура:** Поддержка неограниченного числа локальных и удалённых нод через защищённые SSH ControlMaster соединения с автопереиспользованием сокетов.
 * ⚡ **Аппаратный шейпер скорости (QoS):** Управление полосой пропускания через Linux Traffic Control (`tc`):
   * **Загрузка (Download / Egress):** Классы `HTB` с точным соответствием `rate == ceil` (исключает овербукинг и неконтролируемые всплески).
   * **Отдача (Upload / Ingress):** `Ingress policing` со строгим отбрасыванием пакетов (`action drop`) сверх установленного лимита (10 / 30 / 50 / 100 Мбит/с).
