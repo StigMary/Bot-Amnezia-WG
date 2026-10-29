@@ -12,21 +12,33 @@
 |:---:|:---:|
 | <img src="docs/screenshots/01_telegram_bot.png" width="380" alt="Telegram Bot" /> | <img src="docs/screenshots/02_dashboard.png" width="380" alt="Dashboard" /> |
 
-| 👥 Список абонентов с фильтрами | ⚙️ Управление службами узла |
+| 👥 Список абонентов (Ноды и статусы) | ⚙️ Управление службами и узлом |
 |:---:|:---:|
 | <img src="docs/screenshots/03_subscribers.png" width="380" alt="Subscribers" /> | <img src="docs/screenshots/04_server_control.png" width="380" alt="Server Control" /> |
 
-| 📊 График нагрузки 24ч (Chart.js) | ✨ Создание абонента (выбор ноды) |
+| 📊 Мониторинг системы 24ч (CPU / RAM) | 🌐 Мониторинг сети 24ч (RX / TX Трафик) |
 |:---:|:---:|
-| <img src="docs/screenshots/05_chart_24h.png" width="380" alt="Load Chart" /> | <img src="docs/screenshots/06_create_user.png" width="380" alt="Create User" /> |
+| <img src="docs/screenshots/05_chart_system.png" width="380" alt="CPU and RAM Chart" /> | <img src="docs/screenshots/06_chart_network.png" width="380" alt="Network Bandwidth Chart" /> |
 
-| 👤 Карточка абонента и QoS-шейпер | 💬 Техподдержка (Тикеты) |
+| 👤 Карточка абонента и статистика | ⚡ Аппаратный шейпинг QoS (Лимиты / Карцер) |
 |:---:|:---:|
-| <img src="docs/screenshots/07_user_card.png" width="380" alt="User Card" /> | <img src="docs/screenshots/08_tickets.png" width="380" alt="Tickets" /> |
+| <img src="docs/screenshots/07_user_card.png" width="380" alt="User Details Card" /> | <img src="docs/screenshots/08_user_speeds.png" width="380" alt="Speed Limiter QoS" /> |
 
-| 📢 Массовая рассылка | ⚙️ Системные настройки и бэкап |
+| 💳 Продление подписки и биллинг | 📦 Массовые операции над абонентами |
 |:---:|:---:|
-| <img src="docs/screenshots/09_broadcast.png" width="380" alt="Broadcast" /> | <img src="docs/screenshots/10_settings.png" width="380" alt="Settings" /> |
+| <img src="docs/screenshots/09_subscription_renewal.png" width="380" alt="Subscription Renewal" /> | <img src="docs/screenshots/10_batch_operations.png" width="380" alt="Batch Operations" /> |
+
+| ✉️ Сообщение выбранным абонентам | 💬 Список обращений (Тикеты) |
+|:---:|:---:|
+| <img src="docs/screenshots/11_batch_messaging.png" width="380" alt="Direct Message to Selected" /> | <img src="docs/screenshots/12_tickets_list.png" width="380" alt="Tickets List" /> |
+
+| 🧑‍💻 Чат с клиентом в тикете | 📢 Массовая системная рассылка |
+|:---:|:---:|
+| <img src="docs/screenshots/13_ticket_chat.png" width="380" alt="Ticket Chat" /> | <img src="docs/screenshots/14_broadcast.png" width="380" alt="Broadcast" /> |
+
+| ⚙️ Пороги аномалий и экспорт бэкапов | |
+|:---:|:---:|
+| <img src="docs/screenshots/15_settings_backups.png" width="380" alt="Settings and Backups" /> | |
 
 </div>
 
