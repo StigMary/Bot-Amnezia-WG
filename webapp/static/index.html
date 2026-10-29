@@ -58,7 +58,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
             <h2 style="margin:0;">Абоненты</h2>
             <div>
-                <button class="btn btn-primary" style="width:auto; padding:6px 12px; margin:0; margin-right: 8px;" onclick="openCreateUserModal()">➕ Новый</button>
+                <button class="btn btn-secondary" style="width:auto; padding:6px 12px; margin:0; margin-right: 8px; opacity:0.85; border:1px dashed var(--hint-color, #4b5563);" onclick="openCreateUserModal()">➕ Новый <span style="font-size:10px; background:rgba(255,255,255,0.12); padding:1px 5px; border-radius:4px; margin-left:4px;">Скоро</span></button>
                 <button class="btn btn-outline" style="width:auto; padding:6px 12px; margin:0;" onclick="toggleBulkMode()" id="bulk-btn">Выбрать</button>
             </div>
         </div>
@@ -785,24 +785,13 @@
                 
         let availableServers = [];
         
-        async function openCreateUserModal() {
-            document.getElementById('create-user-alias').value = '';
-            
-            try {
-                if (availableServers.length === 0) {
-                    const servers = await apiCallSafe('/vpn_containers');
-                    availableServers = servers;
-                }
-                const select = document.getElementById('create-user-server');
-                select.innerHTML = availableServers.map(s => `<option value="${s.name}|${s.alias}">${s.alias}</option>`).join('');
-            } catch (err) {
-                console.error(err);
-                tg.showAlert("Ошибка загрузки серверов");
-                return;
+        function openCreateUserModal() {
+            const msg = "⏳ Функция создания абонентов в панели находится в разработке.\n\nСоздавайте клиентов в приложении Amnezia VPN — они автоматически синхронизируются и появятся здесь!";
+            if (tg && typeof tg.showAlert === 'function') {
+                tg.showAlert(msg);
+            } else {
+                alert(msg);
             }
-            
-            document.getElementById('create-user-modal').classList.add('active');
-            document.getElementById('modal-overlay').classList.add('active');
         }
         
         function closeCreateUserModal() {
