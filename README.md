@@ -4,6 +4,26 @@
 
 ---
 
+## 📸 Интерфейс и возможности (Showcase)
+
+<div align="center">
+
+| 📱 Главный Дашборд WebApp | 👥 Управление абонентами |
+|:---:|:---:|
+| <img src="docs/screenshots/02_dashboard.png" width="380" alt="Dashboard" /> | <img src="docs/screenshots/03_subscribers.png" width="380" alt="Subscribers" /> |
+
+| ⚙️ Управление службами и нодами | 📊 График нагрузки 24ч (Chart.js) |
+|:---:|:---:|
+| <img src="docs/screenshots/04_server_control.png" width="380" alt="Server Control" /> | <img src="docs/screenshots/05_chart_24h.png" width="380" alt="Load Chart" /> |
+
+| 🤖 Telegram Бот (/start) | ✨ Создание абонента и выбор ноды |
+|:---:|:---:|
+| <img src="docs/screenshots/01_telegram_bot.png" width="380" alt="Telegram Bot" /> | <img src="docs/screenshots/06_create_user.png" width="380" alt="Create User" /> |
+
+</div>
+
+---
+
 ## 🌟 Основные возможности
 
 * 📱 **Интерактивный WebApp Дашборд:** Графика нагрузки серверов (CPU, RAM, диск, сетевая активность в реальном времени), детальная статистика по клиентам, управление ключами и тарифами в 1 клик.
