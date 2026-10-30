@@ -158,7 +158,7 @@ def register(bot: telebot.TeleBot):
                 pass
             return
 
-        if message.from_user.id == cfg.admin_id:
+        if message.from_user.id in cfg.admin_ids:
             return  # admin.py обрабатывает первым
 
         uid = message.from_user.id
@@ -168,9 +168,13 @@ def register(bot: telebot.TeleBot):
         user = get_user_by_tg_id(uid)
 
         if not user:
+            from database import add_pending_tg_user
+            f_name = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip() or "Без имени"
+            u_name = f"@{message.from_user.username}" if message.from_user.username else ""
+            add_pending_tg_user(uid, f_name, u_name)
             _pending_pool[uid] = {
-                "name": f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip(),
-                "username": f"@{message.from_user.username}" if message.from_user.username else f"ID:{uid}",
+                "name": f_name,
+                "username": u_name or f"ID:{uid}",
             }
             bot.send_message(
                 message.chat.id,

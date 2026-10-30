@@ -197,56 +197,98 @@ def _send_users_page(bot, chat_id, page, edit_msg_id=None, flt='all'):
 def register(bot: telebot.TeleBot):
 
 # ── /start — админка ────────────────────────────────────────────────────
-    @bot.message_handler(commands=["start"], func=lambda m: m.from_user.id == cfg.admin_id)
-    def cmd_start_admin(message):
-        markup = ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row(KeyboardButton("📡 Серверы"), KeyboardButton("🛠 Сервис"))
-        markup.row(KeyboardButton("🔍 Поиск"))
-
+    def _build_admin_dashboard():
         stats = get_vpn_stats()
-        _total2 = len(stats)
-        _online2 = sum(1 for s in stats if s.get("online_emoji", "") in ("🟢", "🟡"))
+        total = len(stats)
+        online = sum(1 for s in stats if s.get("online_emoji", "") in ("🟢", "🟡"))
 
-        _cpu_se2 = psutil.cpu_percent(interval=None)
-        _ram_se2 = psutil.virtual_memory().percent
+        local_cpu = psutil.cpu_percent(interval=None)
+        local_ram = psutil.virtual_memory().percent
 
-        _rf2 = get_ru_metrics()
-        if _rf2:
-            _ru_status2 = f"🖥 {float(_rf2.get('cpu', 0)):.0f}%  💾 {float(_rf2.get('ram', 0)):.0f}%"
-        else:
-            _ru_status2 = "❌ недоступен"
+        nodes_lines = []
+        for node in cfg.vpn_containers:
+            alias = node.get("alias") or node.get("name") or "Node"
+            if node.get("host") == "local":
+                nodes_lines.append(f"{alias}\n   └ 🟢 🖥 `{local_cpu:.0f}%` CPU  |  💾 `{local_ram:.0f}%` RAM")
+            else:
+                nodes_lines.append(f"{alias}\n   └ 🟢 Активен")
 
-        import datetime as _dt2
-        _now2 = _dt2.datetime.now().strftime("%d.%m.%Y  %H:%M")
-        _dash2 = (
+        nodes_block = "\n".join(nodes_lines) if nodes_lines else "   └ Ноды не настроены"
+        now_str = datetime.now().strftime("%d.%m.%Y  %H:%M")
+
+        dash_text = (
             f"👑 *{cfg.project_name} Admin Panel*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"🟢 Онлайн: *{_online2}*  |  👥 Всего: *{_total2}*\n"
-            f"🇸🇪 SE: 🖥 {_cpu_se2:.0f}%  💾 {_ram_se2:.0f}%\n"
-            f"🇷🇺 RU: {_ru_status2}\n"
-            f"🕐 {_now2}"
+            f"🟢 Онлайн: *{online}*  |  👥 Всего: *{total}*\n\n"
+            f"📡 *Серверы и ноды ({len(cfg.vpn_containers)}):*\n"
+            f"{nodes_block}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"🕐 {now_str}"
         )
 
         import time as _t
-        import os as _os
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, MenuButtonWebApp, WebAppInfo
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
 
-        _wh_url = _os.getenv("WEBHOOK_URL", "https://accomplished-travelers-acids-jaguar.trycloudflare.com").strip().rstrip("/")
-        _app_url = f"{_wh_url}?t={int(_t.time())}"
+        wh_url = os.getenv("WEBHOOK_URL", "https://experienced-volume-herbs-remedy.trycloudflare.com").strip().rstrip("/")
+        app_url = f"{wh_url}?t={int(_t.time())}"
 
         inline_markup = InlineKeyboardMarkup()
-        inline_markup.add(InlineKeyboardButton("🌐 Открыть Web-Панель", web_app=WebAppInfo(url=_app_url)))
+        inline_markup.row(InlineKeyboardButton("🌐 Открыть Web-Панель", web_app=WebAppInfo(url=app_url)))
+        inline_markup.row(
+            InlineKeyboardButton("🔄 Обновить", callback_data="admin_dash_refresh"),
+            InlineKeyboardButton("💾 Скачать бэкап", callback_data="admin_backup_db"),
+        )
 
-        try:
+        reply_markup = ReplyKeyboardMarkup(resize_keyboard=True)
+        reply_markup.row(
+            KeyboardButton("🌐 Web-Панель", web_app=WebAppInfo(url=app_url)),
+            KeyboardButton("💾 Бэкап БД"),
+        )
+        reply_markup.row(KeyboardButton("🔄 Сводка"))
+
+        return dash_text, inline_markup, reply_markup, app_url
+
+    def _send_backup_files(chat_id):
+        bot.send_message(chat_id, "📦 Собираю бэкап базы данных...")
+        for path, cap in [(cfg.db_file, "🗄 БД (SQLite)"), (cfg.metrics_file, "📈 Метрики")]:
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    bot.send_document(chat_id, f, caption=cap)
+        log_audit("BACKUP", admin_id=chat_id)
+
+    @bot.message_handler(commands=["start"], func=lambda m: m.from_user.id in getattr(cfg, "admin_ids", [cfg.admin_id]))
+    def cmd_start_admin(message):
+        dash_text, inline_markup, reply_markup, app_url = _build_admin_dashboard()
+        with contextlib.suppress(Exception):
+            from telebot.types import MenuButtonWebApp, WebAppInfo
             bot.set_chat_menu_button(
                 chat_id=message.chat.id,
-                menu_button=MenuButtonWebApp(type="web_app", text="Web-Панель", web_app=WebAppInfo(url=_app_url))
+                menu_button=MenuButtonWebApp(type="web_app", text="Web-Панель", web_app=WebAppInfo(url=app_url))
             )
-        except Exception:
-            pass
+        bot.send_message(message.chat.id, dash_text, reply_markup=inline_markup, parse_mode="Markdown")
 
-        bot.reply_to(message, _dash2, reply_markup=markup, parse_mode="Markdown")
-        bot.send_message(message.chat.id, "👇 Нажмите кнопку ниже для запуска Mini App:", reply_markup=inline_markup)
+    @bot.callback_query_handler(func=lambda c: c.data == "admin_dash_refresh")
+    @admin_only_callback
+    def cb_admin_dash_refresh(call):
+        dash_text, inline_markup, _, _ = _build_admin_dashboard()
+        with contextlib.suppress(Exception):
+            bot.edit_message_text(dash_text, call.message.chat.id, call.message.message_id, reply_markup=inline_markup, parse_mode="Markdown")
+        bot.answer_callback_query(call.id, "Сводка обновлена 🔄")
+
+    @bot.callback_query_handler(func=lambda c: c.data == "admin_backup_db")
+    @admin_only_callback
+    def cb_admin_backup_db(call):
+        bot.answer_callback_query(call.id)
+        _send_backup_files(call.message.chat.id)
+
+    @bot.message_handler(func=lambda m: m.text in ("💾 Бэкап БД", "💾 Бэкап сейчас", "/backup") and m.from_user.id in getattr(cfg, "admin_ids", [cfg.admin_id]))
+    def msg_backup_db(message):
+        _send_backup_files(message.chat.id)
+
+    @bot.message_handler(func=lambda m: m.text in ("🔄 Сводка", "📡 Серверы", "🛠 Сервис") and m.from_user.id in getattr(cfg, "admin_ids", [cfg.admin_id]))
+    def msg_servers_redirect(message):
+        dash_text, inline_markup, reply_markup, app_url = _build_admin_dashboard()
+        bot.send_message(message.chat.id, dash_text, reply_markup=inline_markup, parse_mode="Markdown")
 
     @bot.message_handler(commands=["link"])
     @admin_only
@@ -382,44 +424,17 @@ def register(bot: telebot.TeleBot):
         bot.pin_chat_message(message.chat.id, msg.message_id)
         bot.reply_to(message, "✅ Виджет создан. Обновление каждые 30 сек.")
 
-    # ── Текстовые команды (4 кнопки главного меню) ───────────────────────────
-    @bot.message_handler(func=lambda m: m.text in ("📡 Серверы", "🛠 Сервис"))
-    @admin_only
-    @rate_limit(2)
-    def handle_menu(message):
-        text = message.text
-
-        if text == "📡 Серверы":
-            markup = InlineKeyboardMarkup(row_width=2)
-            markup.add(
-                InlineKeyboardButton("🖥 Статус", callback_data="menu_status"),
-                InlineKeyboardButton("📈 Нагрузка", callback_data="menu_analysis"),
-                InlineKeyboardButton("🩺 Пинг (МСК)", callback_data="menu_ping"),
-            )
-            markup.add(
-                InlineKeyboardButton("🔄 Рестарт SE", callback_data="restart_ask|SE"),
-                InlineKeyboardButton("🔄 Рестарт RU", callback_data="restart_ask|RU"),
-            )
-            bot.send_message(message.chat.id, "📡 *Серверы*", reply_markup=markup, parse_mode="Markdown")
-
-        elif text == "🛠 Сервис":
-            markup = InlineKeyboardMarkup(row_width=1)
-            markup.add(
-                InlineKeyboardButton("📋 Журнал действий", callback_data="menu_journal"),
-                InlineKeyboardButton("💾 Бэкап сейчас", callback_data="menu_backup"),
-                InlineKeyboardButton("🔔 Дайджест", callback_data="menu_digest"),
-            )
-            bot.send_message(message.chat.id, "🛠 *Сервис*", reply_markup=markup, parse_mode="Markdown")
+    # ── Текстовые команды (главное меню) ────────────────────────────────────
 
     # ── #6: Кнопка «🔍 Поиск» — интерактивный поиск без /search ─────────────
-    @bot.message_handler(func=lambda m: m.text == "🔍 Поиск" and m.from_user.id == cfg.admin_id)
+    @bot.message_handler(func=lambda m: m.text == "🔍 Поиск" and m.from_user.id in getattr(cfg, "admin_ids", [cfg.admin_id]))
     @admin_only
     def btn_search_admin(message):
         msg = bot.send_message(message.chat.id, "🔍 Введите имя или часть IP для поиска:")
         bot.register_next_step_handler(msg, _do_search_step)
 
     def _do_search_step(message):
-        if message.from_user.id != cfg.admin_id:
+        if message.from_user.id not in getattr(cfg, "admin_ids", [cfg.admin_id]):
             return
         query = (message.text or "").strip().lower()
         if not query:

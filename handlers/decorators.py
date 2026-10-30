@@ -22,11 +22,11 @@ _GROUP_CACHE_TTL = 300  # 5 минут
 
 
 def admin_only(func):
-    """Пропускает обработчик только для ADMIN_ID (message)."""
+    """Пропускает обработчик только для администраторов из ADMIN_IDS или ADMIN_ID."""
 
     @wraps(func)
     def wrapper(message: telebot.types.Message, *args, **kwargs):
-        if message.from_user.id != cfg.admin_id:
+        if message.from_user.id not in cfg.admin_ids:
             return
         return func(message, *args, **kwargs)
 
@@ -34,12 +34,11 @@ def admin_only(func):
 
 
 def admin_only_callback(func):
-    """Пропускает callback только для ADMIN_ID."""
+    """Пропускает callback только для администраторов из ADMIN_IDS или ADMIN_ID."""
 
     @wraps(func)
     def wrapper(call: telebot.types.CallbackQuery, *args, **kwargs):
-        if call.from_user.id != cfg.admin_id:
-            # Получаем бот-инстанс через атрибут, пробрасываемый при регистрации
+        if call.from_user.id not in cfg.admin_ids:
             try:
                 call.bot.answer_callback_query(call.id, "⛔ Нет доступа.", show_alert=True)
             except Exception:
@@ -71,7 +70,7 @@ def group_member_only(bot: telebot.TeleBot):
 
             uid = message.from_user.id
             # Админ всегда проходит
-            if uid == cfg.admin_id:
+            if uid in cfg.admin_ids:
                 return func(message, *args, **kwargs)
 
             now = time.time()

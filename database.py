@@ -137,6 +137,16 @@ def _migrate() -> None:
                 created_at TEXT
             )
         """)
+
+        # Таблица зала ожидания (пользователи Telegram, ожидающие привязки к VPN)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_tg_users (
+                tg_user_id INTEGER PRIMARY KEY,
+                first_name TEXT,
+                username   TEXT,
+                created_at TEXT
+            )
+        """)
         
 
         # Таблица для отметок об уже отправленных биллинг-уведомлениях
@@ -520,3 +530,35 @@ def get_user_config(ip_address: str) -> str | None:
     with get_conn() as conn:
         row = conn.execute("SELECT config_text FROM users WHERE ip_address = ?", (ip_address,)).fetchone()
         return row[0] if row and row[0] else None
+
+
+def add_pending_tg_user(tg_user_id: int, first_name: str, username: str) -> None:
+    """Добавляет пользователя в зал ожидания при нажатии /start."""
+    from datetime import datetime
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO pending_tg_users (tg_user_id, first_name, username, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(tg_user_id) DO UPDATE SET
+                first_name = excluded.first_name,
+                username = excluded.username,
+                created_at = excluded.created_at
+        """, (tg_user_id, first_name, username, now))
+
+
+def get_pending_tg_users() -> list[dict]:
+    """Возвращает список всех пользователей из зала ожидания."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT tg_user_id, first_name, username, created_at
+            FROM pending_tg_users
+            ORDER BY created_at DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def remove_pending_tg_user(tg_user_id: int) -> None:
+    """Удаляет пользователя из зала ожидания после успешной привязки."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM pending_tg_users WHERE tg_user_id = ?", (tg_user_id,))
