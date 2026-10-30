@@ -272,6 +272,25 @@
                 <input type="number" id="set-crit" class="form-control" value="1" style="font-family: var(--font-mono); font-size: 16px;">
             </div>
 
+            <div style="height: 1px; background: var(--border-light); margin: 20px 0;"></div>
+
+            <h4 style="margin-bottom: 16px; color: var(--text-main); font-weight: 500;">💳 Реквизиты и оплата</h4>
+
+            <div style="margin-bottom: 12px;">
+                <label class="form-label">Банк / Способ оплаты</label>
+                <input type="text" id="set-bank" class="form-control" placeholder="Т-Банк / Сбербанк">
+            </div>
+
+            <div style="margin-bottom: 12px;">
+                <label class="form-label">Номер карты / телефона (СБП)</label>
+                <input type="text" id="set-details" class="form-control" placeholder="+7 (999) 000-00-00 (СБП)">
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <label class="form-label">Стоимость подписки (текст)</label>
+                <input type="text" id="set-amount" class="form-control" placeholder="150 руб./мес.">
+            </div>
+
             <button class="btn btn-primary" style="margin-top: 8px;" onclick="saveSettings()">
                 Сохранить настройки
             </button>
@@ -1727,6 +1746,9 @@
                 document.getElementById('set-ram').value = data.anomaly_ram_threshold || '';
                 document.getElementById('set-warn').value = data.billing_warn_days || '';
                 document.getElementById('set-crit').value = data.billing_critical_days || '';
+                if (document.getElementById('set-bank')) document.getElementById('set-bank').value = data.payment_bank || '';
+                if (document.getElementById('set-details')) document.getElementById('set-details').value = data.payment_details || '';
+                if (document.getElementById('set-amount')) document.getElementById('set-amount').value = data.payment_amount || '';
             }
         }
         
@@ -1735,11 +1757,14 @@
                 anomaly_cpu_threshold: document.getElementById('set-cpu').value,
                 anomaly_ram_threshold: document.getElementById('set-ram').value,
                 billing_warn_days: document.getElementById('set-warn').value,
-                billing_critical_days: document.getElementById('set-crit').value
+                billing_critical_days: document.getElementById('set-crit').value,
+                payment_bank: document.getElementById('set-bank') ? document.getElementById('set-bank').value : '',
+                payment_details: document.getElementById('set-details') ? document.getElementById('set-details').value : '',
+                payment_amount: document.getElementById('set-amount') ? document.getElementById('set-amount').value : ''
             };
             const res = await apiCall('/settings', 'POST', payload);
             if (res && res.ok) {
-                tg.showAlert(res.msg);
+                tg.showAlert(res.msg || 'Настройки успешно сохранены!');
             }
         }
         
@@ -1747,10 +1772,21 @@
         let currentRegIp = null;
         let quickBindTgId = null;
 
-        function openQuickBindModal(tgId, name) {
+        async function openQuickBindModal(tgId, name) {
             quickBindTgId = tgId;
             document.getElementById('quick-bind-user-info').innerText = `${name} (TG: ${tgId})`;
             const select = document.getElementById('quick-bind-peer-select');
+            select.innerHTML = '<option value="">-- Загрузка абонентов... --</option>';
+            document.getElementById('quick-bind-modal').classList.add('active');
+            document.getElementById('modal-overlay').classList.add('active');
+
+            if (!allUsersData || allUsersData.length === 0) {
+                try {
+                    const loaded = await apiCallSafe('/users');
+                    if (loaded && Array.isArray(loaded)) allUsersData = loaded;
+                } catch(e) {}
+            }
+
             select.innerHTML = '<option value="">-- Выберите абонента --</option>';
             if (allUsersData && allUsersData.length > 0) {
                 const unassigned = allUsersData.filter(u => !u.tg_id);
@@ -1758,7 +1794,7 @@
                 
                 if (unassigned.length > 0) {
                     const group = document.createElement('optgroup');
-                    group.label = 'Свободные конфиги (без TG)';
+                    group.label = '🟢 Свободные конфиги (без TG)';
                     unassigned.forEach(u => {
                         const opt = document.createElement('option');
                         opt.value = u.ip;
@@ -1769,7 +1805,7 @@
                 }
                 if (assigned.length > 0) {
                     const group = document.createElement('optgroup');
-                    group.label = 'Уже привязанные (мульти-девайс)';
+                    group.label = '👥 Уже привязанные (мульти-девайс)';
                     assigned.forEach(u => {
                         const opt = document.createElement('option');
                         opt.value = u.ip;
@@ -1778,9 +1814,9 @@
                     });
                     select.appendChild(group);
                 }
+            } else {
+                select.innerHTML = '<option value="">-- Список абонентов пуст --</option>';
             }
-            document.getElementById('quick-bind-modal').classList.add('active');
-            document.getElementById('modal-overlay').classList.add('active');
         }
 
         function closeQuickBindModal() {
@@ -1806,6 +1842,9 @@
         }
 
         async function loadWaitingRoom() {
+            if (!allUsersData || allUsersData.length === 0) {
+                apiCallSafe('/users').then(res => { if (res && Array.isArray(res)) allUsersData = res; });
+            }
             const res = await apiCallSafe('/waiting_room');
             if (!res) return;
             

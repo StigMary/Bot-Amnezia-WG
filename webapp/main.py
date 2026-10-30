@@ -1415,6 +1415,9 @@ async def get_settings_api(admin=Depends(require_admin)):
         "anomaly_ram_threshold": get_setting("anomaly_ram_threshold", str(cfg.anomaly_ram_threshold)),
         "billing_warn_days": get_setting("billing_warn_days", str(cfg.billing_warn_days)),
         "billing_critical_days": get_setting("billing_critical_days", str(cfg.billing_critical_days)),
+        "payment_bank": get_setting("payment_bank", cfg.payment_bank or "Т-Банк"),
+        "payment_details": get_setting("payment_details", cfg.payment_details or ""),
+        "payment_amount": get_setting("payment_amount", cfg.payment_amount or "150 руб./мес."),
     }
 
 @app.post("/api/settings")
