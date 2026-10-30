@@ -272,6 +272,25 @@
                 <input type="number" id="set-crit" class="form-control" value="1" style="font-family: var(--font-mono); font-size: 16px;">
             </div>
 
+            <div style="height: 1px; background: var(--border-light); margin: 20px 0;"></div>
+
+            <h4 style="margin-bottom: 16px; color: var(--text-main); font-weight: 500;">💳 Реквизиты и оплата</h4>
+
+            <div style="margin-bottom: 12px;">
+                <label class="form-label">Банк / Способ оплаты</label>
+                <input type="text" id="set-bank" class="form-control" placeholder="Т-Банк / Сбербанк">
+            </div>
+
+            <div style="margin-bottom: 12px;">
+                <label class="form-label">Номер карты / телефона (СБП)</label>
+                <input type="text" id="set-details" class="form-control" placeholder="+7 (999) 000-00-00 (СБП)">
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <label class="form-label">Стоимость подписки (текст)</label>
+                <input type="text" id="set-amount" class="form-control" placeholder="150 руб./мес.">
+            </div>
+
             <button class="btn btn-primary" style="margin-top: 8px;" onclick="saveSettings()">
                 Сохранить настройки
             </button>
@@ -295,7 +314,7 @@
     <!-- Waiting Room Page -->
     <div id="page-waiting" class="page">
         <h2 class="page-title" style="margin-bottom: 16px; font-weight: 600; color: var(--text-main);">🚪 Зал ожидания</h2>
-        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">Новые пиры WireGuard, ещё не зарегистрированные как клиенты.</p>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">Пользователи Telegram, ожидающие привязки, и новые пиры WireGuard.</p>
         <div id="waiting-list">
             <div class="loading">Загрузка...</div>
         </div>
@@ -358,6 +377,25 @@
                 <input type="number" id="reg-days" class="modal-input" style="width: 100%; margin-top: 4px; padding: 8px; border-radius: 8px; border: 1px solid var(--hint-color); background: var(--secondary-bg-color); color: var(--text-color);" value="30">
             </div>
             <button class="btn" style="background-color: var(--success);" onclick="submitRegistration()">✔️ Зарегистрировать</button>
+        </div>
+    </div>
+
+    <!-- Quick Bind Modal (from Waiting Room) -->
+    <div id="quick-bind-modal" class="modal" style="z-index: 250;">
+        <button class="modal-close" onclick="closeQuickBindModal()">×</button>
+        <h2>🔗 Привязка к VPN</h2>
+        <div class="card" style="margin-top: 16px;">
+            <div style="margin-bottom: 14px;">
+                <label style="color: var(--text-muted); font-size: 13px;">Абонент в Telegram:</label>
+                <div id="quick-bind-user-info" style="font-weight: 600; font-size: 15px; margin-top: 4px; color: var(--text-main);">-</div>
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="color: var(--text-muted); font-size: 13px; display: block; margin-bottom: 6px;">Выберите абонента / конфиг VPN:</label>
+                <select id="quick-bind-peer-select" class="modal-input" style="width: 100%; padding: 10px; border-radius: 8px;">
+                    <option value="">-- Выберите абонента --</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="submitQuickBind()">✅ Привязать Telegram аккаунт</button>
         </div>
     </div>
 
@@ -1099,11 +1137,15 @@
                 html += `
                     <div class="list-item" onclick="${clickAction}">
                         ${checkHtml}
-                        <div class="item-content">
-                            <div class="item-title">${u.online_emoji} ${u.alias || u.ip}${renameBtnHtml}</div>
+                        <div class="item-content" style="min-width: 0;">
+                            <div class="item-title" style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                                <span style="flex-shrink: 0;">${u.online_emoji}</span>
+                                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">${u.alias || u.ip}</span>
+                                <span style="flex-shrink: 0;">${renameBtnHtml}</span>
+                            </div>
                             <div class="item-sub">${flag} ${speedStr} • ⬇️${u.downloaded}</div>
                         </div>
-                        <div class="${badgeClass}">${u.paid_display || 'Без оплаты'}</div>
+                        <div class="${badgeClass}" style="flex-shrink: 0; margin-left: 8px;">${u.paid_display || 'Без оплаты'}</div>
                     </div>
                 `;
             }
@@ -1120,34 +1162,59 @@
             }
         }
 
-        function populateBindUsersSelect() {
+        async function populateBindUsersSelect() {
             const select = document.getElementById('bind-target-user-select');
-            select.innerHTML = '<option value="">-- Выберите абонента --</option>';
-            if (!allUsersData) return;
+            select.innerHTML = '<option value="">-- Выберите абонента или Telegram --</option>';
             
-            // Фильтруем пользователей, у которых есть TG ID и исключаем текущий IP
-            const boundUsers = allUsersData.filter(u => u.tg_id && u.ip !== currentUserIp);
-            // Группируем по tg_id, чтобы не дублировать
-            const seenTg = new Set();
-            boundUsers.forEach(u => {
-                if (!seenTg.has(u.tg_id)) {
-                    seenTg.add(u.tg_id);
+            // Загружаем пользователей из зала ожидания
+            let pendingTg = [];
+            try {
+                pendingTg = await apiCallSafe('/pending_tg_users') || [];
+            } catch(e) {}
+
+            if (pendingTg && pendingTg.length > 0) {
+                const optGroupTg = document.createElement('optgroup');
+                optGroupTg.label = '⏳ Зал ожидания (Telegram)';
+                pendingTg.forEach(p => {
                     const opt = document.createElement('option');
-                    opt.value = u.ip;
-                    opt.textContent = `${u.alias || 'Без имени'} (${u.ip}) [TG: ${u.tg_id}]`;
-                    select.appendChild(opt);
+                    opt.value = 'tg:' + p.tg_user_id;
+                    const uname = p.username ? ' (' + p.username + ')' : '';
+                    opt.textContent = '👤 ' + (p.first_name || 'Без имени') + uname + ' [TG: ' + p.tg_user_id + ']';
+                    optGroupTg.appendChild(opt);
+                });
+                select.appendChild(optGroupTg);
+            }
+
+            if (allUsersData && allUsersData.length > 0) {
+                const optGroupUsers = document.createElement('optgroup');
+                optGroupUsers.label = '👥 Другие абоненты (мульти-девайс)';
+                const boundUsers = allUsersData.filter(u => u.tg_id && u.ip !== currentUserIp);
+                const seenTg = new Set();
+                boundUsers.forEach(u => {
+                    if (!seenTg.has(u.tg_id)) {
+                        seenTg.add(u.tg_id);
+                        const opt = document.createElement('option');
+                        opt.value = u.ip;
+                        opt.textContent = (u.alias || 'Без имени') + ' (' + u.ip + ') [TG: ' + u.tg_id + ']';
+                        optGroupUsers.appendChild(opt);
+                    }
+                });
+                if (optGroupUsers.children.length > 0) {
+                    select.appendChild(optGroupUsers);
                 }
-            });
+            }
         }
 
         async function applyUserBind() {
             if (!currentUserIp) return;
-            const targetIp = document.getElementById('bind-target-user-select').value;
+            const targetVal = document.getElementById('bind-target-user-select').value;
             const customTg = document.getElementById('bind-custom-tg-id').value;
             
             let payload = {};
-            if (targetIp) {
-                payload.target_ip = targetIp;
+            if (targetVal && targetVal.startsWith('tg:')) {
+                payload.tg_id = parseInt(targetVal.replace('tg:', ''));
+            } else if (targetVal) {
+                payload.target_ip = targetVal;
             } else if (customTg) {
                 payload.tg_id = parseInt(customTg);
             } else {
@@ -1679,6 +1746,9 @@
                 document.getElementById('set-ram').value = data.anomaly_ram_threshold || '';
                 document.getElementById('set-warn').value = data.billing_warn_days || '';
                 document.getElementById('set-crit').value = data.billing_critical_days || '';
+                if (document.getElementById('set-bank')) document.getElementById('set-bank').value = data.payment_bank || '';
+                if (document.getElementById('set-details')) document.getElementById('set-details').value = data.payment_details || '';
+                if (document.getElementById('set-amount')) document.getElementById('set-amount').value = data.payment_amount || '';
             }
         }
         
@@ -1687,37 +1757,147 @@
                 anomaly_cpu_threshold: document.getElementById('set-cpu').value,
                 anomaly_ram_threshold: document.getElementById('set-ram').value,
                 billing_warn_days: document.getElementById('set-warn').value,
-                billing_critical_days: document.getElementById('set-crit').value
+                billing_critical_days: document.getElementById('set-crit').value,
+                payment_bank: document.getElementById('set-bank') ? document.getElementById('set-bank').value : '',
+                payment_details: document.getElementById('set-details') ? document.getElementById('set-details').value : '',
+                payment_amount: document.getElementById('set-amount') ? document.getElementById('set-amount').value : ''
             };
             const res = await apiCall('/settings', 'POST', payload);
             if (res && res.ok) {
-                tg.showAlert(res.msg);
+                tg.showAlert(res.msg || 'Настройки успешно сохранены!');
             }
         }
         
         // Waiting Room & Register
         let currentRegIp = null;
+        let quickBindTgId = null;
+
+        async function openQuickBindModal(tgId, name) {
+            quickBindTgId = tgId;
+            document.getElementById('quick-bind-user-info').innerText = `${name} (TG: ${tgId})`;
+            const select = document.getElementById('quick-bind-peer-select');
+            select.innerHTML = '<option value="">-- Загрузка абонентов... --</option>';
+            document.getElementById('quick-bind-modal').classList.add('active');
+            document.getElementById('modal-overlay').classList.add('active');
+
+            if (!allUsersData || allUsersData.length === 0) {
+                try {
+                    const loaded = await apiCallSafe('/users');
+                    if (loaded && Array.isArray(loaded)) allUsersData = loaded;
+                } catch(e) {}
+            }
+
+            select.innerHTML = '<option value="">-- Выберите абонента --</option>';
+            if (allUsersData && allUsersData.length > 0) {
+                const unassigned = allUsersData.filter(u => !u.tg_id);
+                const assigned = allUsersData.filter(u => u.tg_id);
+                
+                if (unassigned.length > 0) {
+                    const group = document.createElement('optgroup');
+                    group.label = '🟢 Свободные конфиги (без TG)';
+                    unassigned.forEach(u => {
+                        const opt = document.createElement('option');
+                        opt.value = u.ip;
+                        opt.textContent = `${u.alias || 'Без имени'} (${u.ip}) [${u.server || ''}]`;
+                        group.appendChild(opt);
+                    });
+                    select.appendChild(group);
+                }
+                if (assigned.length > 0) {
+                    const group = document.createElement('optgroup');
+                    group.label = '👥 Уже привязанные (мульти-девайс)';
+                    assigned.forEach(u => {
+                        const opt = document.createElement('option');
+                        opt.value = u.ip;
+                        opt.textContent = `${u.alias || 'Без имени'} (${u.ip}) [TG: ${u.tg_id}]`;
+                        group.appendChild(opt);
+                    });
+                    select.appendChild(group);
+                }
+            } else {
+                select.innerHTML = '<option value="">-- Список абонентов пуст --</option>';
+            }
+        }
+
+        function closeQuickBindModal() {
+            quickBindTgId = null;
+            document.getElementById('quick-bind-modal').classList.remove('active');
+            closeAllModals();
+        }
+
+        async function submitQuickBind() {
+            if (!quickBindTgId) return;
+            const peerIp = document.getElementById('quick-bind-peer-select').value;
+            if (!peerIp) {
+                tg.showAlert('Пожалуйста, выберите абонента из списка!');
+                return;
+            }
+            const res = await apiCallSafe(`/user/${peerIp}/bind`, 'POST', { tg_id: parseInt(quickBindTgId) });
+            if (res && res.ok) {
+                tg.showAlert('Пользователь успешно привязан!');
+                closeQuickBindModal();
+                loadWaitingRoom();
+                loadUsers();
+            }
+        }
+
         async function loadWaitingRoom() {
-            const data = await apiCallSafe('/waiting_room');
-            if (!data) return;
+            if (!allUsersData || allUsersData.length === 0) {
+                apiCallSafe('/users').then(res => { if (res && Array.isArray(res)) allUsersData = res; });
+            }
+            const res = await apiCallSafe('/waiting_room');
+            if (!res) return;
             
-            if (data.length === 0) {
-                document.getElementById('waiting-list').innerHTML = '<div class="loading">Нет новых пиров для регистрации.</div>';
+            const tgPending = (res.tg_pending || []);
+            const peerPending = (res.peer_pending || (Array.isArray(res) ? res : []));
+            
+            if (tgPending.length === 0 && peerPending.length === 0) {
+                document.getElementById('waiting-list').innerHTML = '<div class="loading" style="padding: 24px 12px; line-height: 1.5;">Зал ожидания пуст.<br><span style="font-size:12px; color:var(--text-muted);">Когда пользователи нажмут /start в боте, они появятся здесь.</span></div>';
                 return;
             }
             
             let html = '';
-            data.forEach(u => {
+            
+            if (tgPending.length > 0) {
                 html += `
-                    <div class="list-item" onclick="openRegisterModal('${u.ip}')">
-                        <div class="item-info">
-                            <div class="item-title">${u.online_emoji} ${u.ip}</div>
-                            <div class="item-sub">Сервер: ${u.server} • ⬇️${u.downloaded}</div>
-                        </div>
-                        <button class="btn btn-outline" style="width:auto; margin:0; padding:4px 12px; font-size:12px;">Регистрация</button>
+                    <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px; color: var(--text-main); display: flex; align-items: center; justify-content: space-between;">
+                        <span>📱 Ожидают в Telegram (${tgPending.length})</span>
                     </div>
                 `;
-            });
+                tgPending.forEach(u => {
+                    const uName = u.username ? `<span style="color:var(--primary);">${escapeHtml(u.username)}</span>` : '<span style="color:var(--text-muted);">нет юзернейма</span>';
+                    const safeName = escapeHtml(u.first_name || 'Без имени').replace(/'/g, "\\'");
+                    html += `
+                        <div class="list-item" style="cursor: default; padding: 12px 14px; margin-bottom: 8px;">
+                            <div class="item-info">
+                                <div class="item-title" style="font-size:14px; font-weight:600;">👤 ${escapeHtml(u.first_name || 'Без имени')} (${uName})</div>
+                                <div class="item-sub" style="margin-top:2px; font-size:12px;">TG ID: <code style="background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:4px;">${u.tg_user_id}</code></div>
+                            </div>
+                            <button class="btn btn-primary" style="width:auto; margin:0; padding:6px 14px; font-size:12px; flex-shrink:0;" onclick="openQuickBindModal(${u.tg_user_id}, '${safeName}')">🔗 Привязать</button>
+                        </div>
+                    `;
+                });
+            }
+            
+            if (peerPending.length > 0) {
+                html += `
+                    <div style="font-weight: 600; font-size: 14px; margin: 16px 0 8px 0; color: var(--text-main);">
+                        <span>🔌 Неопознанные пиры WireGuard (${peerPending.length})</span>
+                    </div>
+                `;
+                peerPending.forEach(u => {
+                    html += `
+                        <div class="list-item" onclick="openRegisterModal('${u.ip}')" style="cursor: pointer; padding: 12px 14px; margin-bottom: 8px;">
+                            <div class="item-info">
+                                <div class="item-title">${u.online_emoji} ${u.ip}</div>
+                                <div class="item-sub">Сервер: ${u.server} • ⬇️${u.downloaded}</div>
+                            </div>
+                            <button class="btn btn-outline" style="width:auto; margin:0; padding:6px 12px; font-size:12px; flex-shrink:0;">Регистрация</button>
+                        </div>
+                    `;
+                });
+            }
+            
             document.getElementById('waiting-list').innerHTML = html;
         }
 

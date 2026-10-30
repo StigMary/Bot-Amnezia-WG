@@ -77,7 +77,7 @@ def _account_status_text(tg_user_id: int, username: str) -> str:
     dev_lines = "\n".join(f"🔹 {_device_name_display(d['ip_address'], d['client_alias'])}" for d in devices)
 
     lines = [
-        "🛡 <b>Личный кабинет KJZNNETx</b>",
+        f"🛡 <b>Личный кабинет {cfg.project_name}</b>",
         "━" * 20,
         f"👤 Аккаунт: {username}",
         f"🟢 Статус сети: {status_net}",
@@ -158,7 +158,7 @@ def register(bot: telebot.TeleBot):
                 pass
             return
 
-        if message.from_user.id == cfg.admin_id:
+        if message.from_user.id in cfg.admin_ids:
             return  # admin.py обрабатывает первым
 
         uid = message.from_user.id
@@ -168,9 +168,13 @@ def register(bot: telebot.TeleBot):
         user = get_user_by_tg_id(uid)
 
         if not user:
+            from database import add_pending_tg_user
+            f_name = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip() or "Без имени"
+            u_name = f"@{message.from_user.username}" if message.from_user.username else ""
+            add_pending_tg_user(uid, f_name, u_name)
             _pending_pool[uid] = {
-                "name": f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip(),
-                "username": f"@{message.from_user.username}" if message.from_user.username else f"ID:{uid}",
+                "name": f_name,
+                "username": u_name or f"ID:{uid}",
             }
             bot.send_message(
                 message.chat.id,
@@ -241,7 +245,7 @@ def register(bot: telebot.TeleBot):
         msg = bot.send_message(
             call.message.chat.id,
             "💳 <b>Оплата подписки</b>\n\n"
-            f"🏦 Банк: Т-Банк\n"
+            f"🏦 Банк: {cfg.payment_bank}\n"
             f"📱 Номер: <code>{cfg.payment_details}</code>\n\n"
             f"💰 Стоимость: <code>{cfg.payment_amount}</code>\n\n"
             "После оплаты пришлите <b>фото чека</b> прямо в этот чат.\n"

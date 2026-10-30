@@ -1090,6 +1090,11 @@ async def bind_user(ip: str, payload: BindPayload, admin=Depends(require_admin))
         raise HTTPException(status_code=400, detail="Не указан TG ID или абонент для объединения")
         
     bind_tg_to_ip(ip, int(target_tg_id))
+    try:
+        from database import remove_pending_tg_user
+        remove_pending_tg_user(int(target_tg_id))
+    except Exception:
+        pass
     log_audit("BIND", ip, f"tg_id={target_tg_id},via=webapp", cfg.admin_id)
     return {"ok": True, "tg_id": target_tg_id}
 
@@ -1244,11 +1249,13 @@ async def delete_user_endpoint(ip: str, admin=Depends(require_admin)):
 
 @app.get("/api/waiting_room")
 async def waiting_room(admin=Depends(require_admin)):
+    from database import get_pending_tg_users
+    tg_pending = get_pending_tg_users()
     stats = get_vpn_stats()
-    result = []
+    peer_pending = []
     for u in stats:
         if str(u.get("db_alias", "")) == "Новый пользователь":
-            result.append({
+            peer_pending.append({
                 "ip": u["ip"],
                 "server": u["server_alias"],
                 "endpoint": u.get("endpoint", "(none)"),
@@ -1258,7 +1265,15 @@ async def waiting_room(admin=Depends(require_admin)):
                 "uploaded": u["uploaded"],
                 "online_emoji": u["online_emoji"]
             })
-    return result
+    return {
+        "tg_pending": tg_pending,
+        "peer_pending": peer_pending
+    }
+
+@app.get("/api/pending_tg_users")
+async def api_get_pending_tg(admin=Depends(require_admin)):
+    from database import get_pending_tg_users
+    return get_pending_tg_users()
 
 class RegisterPayload(BaseModel):
     alias: str
@@ -1277,6 +1292,11 @@ async def register_user(ip: str, payload: RegisterPayload, admin=Depends(require
     
     if payload.tg_id and payload.tg_id.isdigit():
         update_user_field(ip, "tg_user_id", int(payload.tg_id))
+        try:
+            from database import remove_pending_tg_user
+            remove_pending_tg_user(int(payload.tg_id))
+        except Exception:
+            pass
         
     if payload.days > 0:
         extend_paid_until(ip, payload.days)
@@ -1395,6 +1415,9 @@ async def get_settings_api(admin=Depends(require_admin)):
         "anomaly_ram_threshold": get_setting("anomaly_ram_threshold", str(cfg.anomaly_ram_threshold)),
         "billing_warn_days": get_setting("billing_warn_days", str(cfg.billing_warn_days)),
         "billing_critical_days": get_setting("billing_critical_days", str(cfg.billing_critical_days)),
+        "payment_bank": get_setting("payment_bank", cfg.payment_bank or "Т-Банк"),
+        "payment_details": get_setting("payment_details", cfg.payment_details or ""),
+        "payment_amount": get_setting("payment_amount", cfg.payment_amount or "150 руб./мес."),
     }
 
 @app.post("/api/settings")

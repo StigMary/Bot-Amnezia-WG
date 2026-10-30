@@ -306,7 +306,7 @@ def _get_widget_text() -> str:
     _online_line = f"🟢 {_online} онлайн  |  👥 {_total} всего" if _total else ""
 
     return (
-        "📊 *KJZNNETx  |  Мониторинг*\n"
+        f"📊 *{cfg.project_name}  |  Мониторинг*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🇸🇪 *Швеция  ·  SE Node*\n"
         f"🖥 `{se_cpu_bar}` {cpu_se:.0f}%   💾 `{se_ram_bar}` {ram_se:.0f}%\n"

@@ -78,13 +78,54 @@ class Config:
     billing_warn_days: int = 3  # За сколько дней предупреждать
     billing_critical_days: int = 1  # "Завтра последний день"
 
+    # --- Проект и бренд ---
+    project_name: str = field(
+        default_factory=lambda: os.getenv("PROJECT_NAME", "KznNET")
+    )
+    _payment_bank: str = field(
+        default_factory=lambda: os.getenv("PAYMENT_BANK", "Т-Банк")
+    )
+
     # --- Реквизиты оплаты (показываются клиентам) ---
-    payment_details: str = field(
+    _payment_details: str = field(
         default_factory=lambda: os.getenv("PAYMENT_DETAILS", "Укажите реквизиты в .env (PAYMENT_DETAILS)")
     )
-    payment_amount: str = field(
+    _payment_amount: str = field(
         default_factory=lambda: os.getenv("PAYMENT_AMOUNT", "Укажите сумму в .env (PAYMENT_AMOUNT)")
     )
+
+    @property
+    def payment_bank(self) -> str:
+        try:
+            from database import get_setting
+            val = get_setting("payment_bank")
+            if val:
+                return val
+        except Exception:
+            pass
+        return self._payment_bank
+
+    @property
+    def payment_details(self) -> str:
+        try:
+            from database import get_setting
+            val = get_setting("payment_details")
+            if val:
+                return val
+        except Exception:
+            pass
+        return self._payment_details
+
+    @property
+    def payment_amount(self) -> str:
+        try:
+            from database import get_setting
+            val = get_setting("payment_amount")
+            if val:
+                return val
+        except Exception:
+            pass
+        return self._payment_amount
 
     @property
     def admin_ids(self) -> list[int]:
