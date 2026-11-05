@@ -349,7 +349,7 @@ async def regenerate_user_conf(ip: str, admin=Depends(require_admin)):
         clean_host = _clean_host(target_cont["host"])
         new_conf = _build_client_conf(ip, priv_key, awg_conf, server_pub, clean_host, psk=server_psk)
         save_user_config(ip, new_conf)
-        _save_conf_to_file(ip, user.get("alias", "client"), new_conf)
+        _save_conf_to_file(ip, user.get("alias", "client"), new_conf, target_cont.get("alias", ""))
 
         deep_link = conf_to_amnezia_vpn_link(new_conf, user.get("alias", "client"), target_cont.get("alias", "VPN"))
 

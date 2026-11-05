@@ -69,14 +69,17 @@ def main():
 
     if use_webhook and webhook_base:
         full_webhook = f"{webhook_base}/webhook/telegram"
+        webhook_secret = os.getenv("WEBHOOK_SECRET") or None
         try:
             current_info = bot.get_webhook_info()
             if current_info.url != full_webhook:
                 logger.info(f"Обновление Webhook на: {full_webhook}")
                 bot.remove_webhook()
                 time.sleep(0.5)
-                bot.set_webhook(url=full_webhook, max_connections=40)
+                bot.set_webhook(url=full_webhook, max_connections=40, secret_token=webhook_secret)
             else:
+                if webhook_secret:
+                    bot.set_webhook(url=full_webhook, max_connections=40, secret_token=webhook_secret)
                 logger.info(f"Webhook уже активен: {full_webhook}")
 
             log_audit("BOT_START", details="Mode: Webhook Monitor")
