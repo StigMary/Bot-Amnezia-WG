@@ -103,7 +103,10 @@ def collect_metrics(bot: "telebot.TeleBot") -> None:
             cpu_thresh = float(get_setting("anomaly_cpu_threshold", cfg.anomaly_cpu_threshold))
             ram_thresh = float(get_setting("anomaly_ram_threshold", cfg.anomaly_ram_threshold))
             
-            if cpu_se > cpu_thresh:
+            cpu_local = psutil.cpu_percent(interval=0)
+            ram_local = psutil.virtual_memory().percent
+            
+            if cpu_local > cpu_thresh:
                 # Защита от ложных срабатываний: перепроверяем через 3 сек, чтобы отсеять 1-секундные всплески (cron, apt)
                 time.sleep(3)
                 cpu_confirm = psutil.cpu_percent(interval=2)
@@ -112,9 +115,9 @@ def collect_metrics(bot: "telebot.TeleBot") -> None:
                 if cpu_confirm > cpu_thresh or (load1 / num_cpus * 100) > cpu_thresh:
                     alerts.append(f"🔥 CPU: {cpu_confirm:.1f}% (LA: {load1:.2f}, порог: {cpu_thresh}%)")
                 else:
-                    logger.info(f"Игнорирован кратковременный всплеск CPU: {cpu_se}% -> {cpu_confirm}% (LA: {load1:.2f})")
-            if ram_se > ram_thresh:
-                alerts.append(f"💾 RAM: {ram_se}% (порог: {ram_thresh}%)")
+                    logger.info(f"Игнорирован кратковременный всплеск CPU: {cpu_local}% -> {cpu_confirm}% (LA: {load1:.2f})")
+            if ram_local > ram_thresh:
+                alerts.append(f"💾 RAM: {ram_local:.1f}% (порог: {ram_thresh}%)")
             if alerts:
                 _last_anomaly_alert = now
                 msg = "🚨 *АНОМАЛИЯ НА SE СЕРВЕРЕ!*\n\n" + "\n".join(alerts)
