@@ -541,6 +541,22 @@ _active_lock = threading.Lock()
 _sampler_started = False
 
 
+_last_monitor_access = 0.0
+_client_names_cache = {}
+_client_names_cache_ts = 0.0
+
+def _get_cached_client_names(cont: dict) -> dict[str, str]:
+    global _client_names_cache, _client_names_cache_ts
+    now = time.time()
+    if now - _client_names_cache_ts < 60 and _client_names_cache:
+        return _client_names_cache
+    res = _get_amnezia_client_names(cont)
+    if res:
+        _client_names_cache = res
+        _client_names_cache_ts = now
+    return _client_names_cache or res
+
+
 def _start_speed_sampler():
     global _sampler_started
     if _sampler_started:
@@ -550,76 +566,63 @@ def _start_speed_sampler():
     def _loop():
         global _current_active_now, _speed_samples
         while True:
+            is_active = False
             try:
-                # 1. transfers
-                raw_t = subprocess.check_output(
-                    ["docker", "exec", "amnezia-awg2", "awg", "show", "awg0", "transfer"],
-                    text=True, timeout=4
-                )
-                # 2. latest-handshakes
-                raw_h = subprocess.check_output(
-                    ["docker", "exec", "amnezia-awg2", "awg", "show", "awg0", "latest-handshakes"],
-                    text=True, timeout=4
-                )
-                # 3. allowed-ips
-                raw_i = subprocess.check_output(
-                    ["docker", "exec", "amnezia-awg2", "awg", "show", "awg0", "allowed-ips"],
-                    text=True, timeout=4
-                )
-                # 4. names
-                names_map = _get_amnezia_client_names({"name": "amnezia-awg2", "host": "local"})
-
-                ips_map = {}
-                for line in raw_i.strip().splitlines():
-                    p = line.split("\t")
-                    if len(p) >= 2:
-                        ips_map[p[0]] = p[1].split("/")[0].strip()
-
-                hs_map = {}
-                for line in raw_h.strip().splitlines():
-                    p = line.split("\t")
-                    if len(p) >= 2 and p[1].isdigit():
-                        hs_map[p[0]] = int(p[1])
-
                 now_t = time.time()
-                curr_trans = {}
-                for line in raw_t.strip().splitlines():
-                    p = line.split("\t")
-                    if len(p) >= 3:
-                        curr_trans[p[0]] = (int(p[1]), int(p[2]))
+                is_active = (now_t - _last_monitor_access) < 45
 
+                # 1 быстрый системный вызов dump вместо 4 отдельных docker exec
+                raw_dump = subprocess.check_output(
+                    ["docker", "exec", "amnezia-awg2", "awg", "show", "awg0", "dump"],
+                    text=True, timeout=4
+                )
+                names_map = _get_cached_client_names({"name": "amnezia-awg2", "host": "local"})
+
+                lines = raw_dump.strip().splitlines()
                 active_list = []
-                for pkey, hs in hs_map.items():
-                    # Клиент онлайн (рукопожатие за последние 3 минуты = 180с)
-                    if (now_t - hs) < 180 and hs > 0:
-                        rx2, tx2 = curr_trans.get(pkey, (0, 0))
-                        drx = 0
-                        dtx = 0
-                        dt = 3.0
-                        if pkey in _speed_samples:
-                            rx1, tx1, t1 = _speed_samples[pkey]
-                            dt = max(1.0, now_t - t1)
-                            drx = max(0, rx2 - rx1)
-                            dtx = max(0, tx2 - tx1)
+                curr_trans = {}
 
-                        ip = ips_map.get(pkey, "?")
-                        name = names_map.get(pkey) or names_map.get(ip) or ip
+                # lines[0] — заголовок интерфейса, далее идут пиры
+                if len(lines) > 1:
+                    for line in lines[1:]:
+                        p = line.split("\t")
+                        if len(p) < 7:
+                            continue
+                        pkey = p[0]
+                        ip = p[3].split("/")[0].strip()
+                        hs = int(p[4]) if p[4].isdigit() else 0
+                        rx2 = int(p[5]) if p[5].isdigit() else 0
+                        tx2 = int(p[6]) if p[6].isdigit() else 0
+                        curr_trans[pkey] = (rx2, tx2)
 
-                        active_list.append({
-                            "name": name,
-                            "ip": ip,
-                            "up_kb": round(drx / 1024, 1),
-                            "dn_kb": round(dtx / 1024, 1),
-                            "interval_sec": round(dt, 1),
-                            "total_kb": round((drx + dtx) / 1024, 1),
-                            "last_seen_sec": int(now_t - hs),
-                        })
+                        # Клиент онлайн (рукопожатие за последние 3 минуты = 180с)
+                        if (now_t - hs) < 180 and hs > 0:
+                            drx = 0
+                            dtx = 0
+                            dt = 4.0
+                            if pkey in _speed_samples:
+                                rx1, tx1, t1 = _speed_samples[pkey]
+                                dt = max(1.0, now_t - t1)
+                                drx = max(0, rx2 - rx1)
+                                dtx = max(0, tx2 - tx1)
+
+                            name = names_map.get(pkey) or names_map.get(ip) or ip
+
+                            active_list.append({
+                                "name": name,
+                                "ip": ip,
+                                "up_kb": round(drx / 1024, 1),
+                                "dn_kb": round(dtx / 1024, 1),
+                                "interval_sec": round(dt, 1),
+                                "total_kb": round((drx + dtx) / 1024, 1),
+                                "last_seen_sec": int(now_t - hs),
+                            })
 
                 # Сохраняем срез для следующего замера
                 for pkey, (rx2, tx2) in curr_trans.items():
                     _speed_samples[pkey] = (rx2, tx2, now_t)
 
-                # Сортируем: сначала те, у кого скорость выше нуля, затем по времени последнего рукопожатия
+                # Сортируем: сначала активные по скорости, затем по последнему рукопожатию
                 active_list.sort(key=lambda x: (x["total_kb"], -x["last_seen_sec"]), reverse=True)
 
                 with _active_lock:
@@ -627,7 +630,10 @@ def _start_speed_sampler():
 
             except Exception as e:
                 logger.debug(f"Speed sampler error: {e}")
-            time.sleep(3)
+
+            # Адаптивный интервал: 4с когда открыт дашборд, 20с в режиме покоя
+            sleep_time = 4 if is_active else 20
+            time.sleep(sleep_time)
 
     t = threading.Thread(target=_loop, daemon=True, name="awg_speed_sampler")
     t.start()
@@ -638,6 +644,8 @@ _start_speed_sampler()
 
 def get_ru_monitor_data(force: bool = False) -> dict:
     """Возвращает живые данные мониторинга RU: статус Xray, реальная скорость активных клиентов, топ."""
+    global _ru_monitor_cache, _ru_monitor_cache_ts, _last_monitor_access
+    _last_monitor_access = time.time()
     global _ru_monitor_cache, _ru_monitor_cache_ts
 
     if not force and time.time() - _ru_monitor_cache_ts < _RU_MONITOR_TTL and _ru_monitor_cache:
@@ -649,22 +657,43 @@ def get_ru_monitor_data(force: bool = False) -> dict:
         # 1. Xray status & PID
         xray_pid = "?"
         xray_ok = False
-        try:
-            pid = subprocess.check_output(["pgrep", "-x", "xray"], text=True).strip()
-            if pid:
-                xray_pid = pid.split()[0]
+        if cfg.ru_host:
+            res = run_ssh_cmd(
+                cfg.ru_host,
+                cfg.ru_ssh_port,
+                "pgrep -x xray || docker inspect -f '{{.State.Pid}}' xray 2>/dev/null",
+                timeout=5,
+            )
+            if res and res.strip():
+                xray_pid = res.strip().split()[0]
                 xray_ok = True
-        except Exception:
-            pass
+        else:
+            try:
+                pid = subprocess.check_output(["pgrep", "-x", "xray"], text=True).strip()
+                if pid:
+                    xray_pid = pid.split()[0]
+                    xray_ok = True
+            except Exception:
+                pass
 
         # 2. Connection to SE
         conn_sw = 0
-        se_dst = cfg.se_host or "127.0.0.1"
-        try:
-            out = subprocess.check_output(["ss", "-tnH", "state", "established", "dst", se_dst], text=True)
-            conn_sw = len([l for l in out.strip().splitlines() if l.strip()])
-        except Exception:
-            pass
+        se_dst = "132.243.240.76"
+        if cfg.ru_host:
+            res_conn = run_ssh_cmd(
+                cfg.ru_host,
+                cfg.ru_ssh_port,
+                f"ss -tnH state established dst {se_dst} || ss -tnH state established dport 443",
+                timeout=5,
+            )
+            if res_conn:
+                conn_sw = len([l for l in res_conn.strip().splitlines() if l.strip()])
+        else:
+            try:
+                out = subprocess.check_output(["ss", "-tnH", "state", "established", "dst", se_dst], text=True)
+                conn_sw = len([l for l in out.strip().splitlines() if l.strip()])
+            except Exception:
+                pass
 
         # 3. Топ по суммарному трафику за сессию
         all_stats = get_vpn_stats()

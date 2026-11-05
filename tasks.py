@@ -521,7 +521,7 @@ def start_scheduler(bot: "telebot.TeleBot") -> None:
     schedule.every().day.at(cfg.billing_check_time).do(check_billing, bot)
     schedule.every().day.at("09:00").do(morning_digest, bot)
     schedule.every(30).seconds.do(update_widget, bot)
-    schedule.every(2).minutes.do(check_xray_crash, bot)
+    schedule.every(5).minutes.do(check_xray_crash, bot)
 
     def _run():
         while True:

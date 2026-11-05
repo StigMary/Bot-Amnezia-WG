@@ -2178,6 +2178,7 @@
         // Init
         switchPage('dashboard', document.querySelector('.tab-btn.active'));
         setInterval(() => {
+            if (document.hidden) return; // Экономия ресурсов: не опрашиваем, если вкладка свернута
             if (document.getElementById('page-dashboard').classList.contains('active')) {
                 loadDashboard();
             }
@@ -2186,6 +2187,7 @@
         // Мониторинг RU Xray каждые 30 сек (когда дашборд активен)
         fetchRuMonitor();
         setInterval(() => {
+            if (document.hidden) return; // Экономия ресурсов: не опрашиваем, если вкладка свернута
             if (document.getElementById('page-dashboard').classList.contains('active')) {
                 fetchRuMonitor();
             }
