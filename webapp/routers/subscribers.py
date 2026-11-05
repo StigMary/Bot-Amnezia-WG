@@ -23,10 +23,12 @@ from database import (
     save_user_config,
     update_user_field,
 )
+from vpn.peers import _wg_cmd, _wg_iface
 from vpn_engine import (
     apply_limit,
     auto_apply_qos,
     delete_peer,
+    run_vpn_cmd,
     sanitize_alias,
     sync_db_with_vpn_peers,
     validate_vpn_ip,
@@ -619,8 +621,8 @@ async def create_user(payload: CreateUserPayload, admin=Depends(require_admin)):
                                 ip_clean = ip_str.split('/')[0].strip()
                                 if ip_clean and ip_clean != '(none)':
                                     used_ips.add(ip_clean)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Error checking used IPs on {cont.get('alias')}: {e}")
                         
         awg_conf = run_cmd(["docker", "exec", "-i", target_cont["name"], "cat", "/opt/amnezia/awg/awg0.conf"])
         server_addr_match = re.search(r'Address\s*=\s*([0-9\.]+)/', awg_conf)

@@ -21,16 +21,9 @@ def _verify_init_data(init_data: str) -> dict:
             raise ValueError("No hash")
 
         data_check = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
-        valid_tokens = [cfg.token, "7899367227:AAFGDzxdTev78GNOQdCaK34zv0Xvu3TmlYA"]
-        valid = False
-        for tok in valid_tokens:
-            secret = hmac.new(b"WebAppData", tok.encode(), hashlib.sha256).digest()
-            calc_hash = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(calc_hash, check_hash):
-                valid = True
-                break
-
-        if not valid:
+        secret = hmac.new(b"WebAppData", cfg.token.encode(), hashlib.sha256).digest()
+        calc_hash = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc_hash, check_hash):
             raise ValueError("Invalid hash")
 
         # Проверка давности (не старше 24 часов)
