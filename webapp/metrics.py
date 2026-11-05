@@ -39,6 +39,16 @@ def _cache_set(key: str, data, ttl: int = None):
         _cache[key] = {"data": data, "expires": time.time() + (ttl or _CACHE_TTL.get(key, 5))}
 
 
+def invalidate_cache(keys: list[str] | None = None) -> None:
+    """Инвалидирует кэш в памяти (все ключи или указанный список)."""
+    with _cache_lock:
+        if keys is None:
+            _cache.clear()
+        else:
+            for k in keys:
+                _cache.pop(k, None)
+
+
 def _cached_cpu():
     """Замер загрузки CPU с кэшированием на 3 секунды."""
     v = _cache_get("cpu")

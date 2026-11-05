@@ -32,7 +32,7 @@ from vpn_engine import (
     validate_vpn_ip,
 )
 from webapp.auth import require_admin
-from webapp.metrics import _async_vpn_stats
+from webapp.metrics import _async_vpn_stats, invalidate_cache
 from webapp.schemas import (
     BindPayload,
     BulkActionPayload,
@@ -44,12 +44,26 @@ from webapp.schemas import (
 from webapp.utils import (
     _build_client_conf,
     _clean_host,
+    _delete_conf_files,
     _generate_qr_b64,
     _save_conf_to_file,
     conf_to_amnezia_vpn_link,
 )
 
 router = APIRouter(tags=["subscribers"])
+
+
+def _invalidate_all_caches() -> None:
+    """Мгновенно сбрасывает кэши в памяти (metrics и peers)."""
+    try:
+        from vpn.peers import invalidate_stats_cache
+        invalidate_stats_cache()
+    except Exception:
+        pass
+    try:
+        invalidate_cache(["users", "vpn_stats", "dashboard"])
+    except Exception:
+        pass
 
 
 @router.get("/api/users")
@@ -153,13 +167,17 @@ async def users_list(admin=Depends(require_admin)):
 
 
 @router.get("/api/user/{ip}")
-async def user_detail(ip: str, admin=Depends(require_admin)):
+async def user_detail(ip: str, server: str = "", admin=Depends(require_admin)):
     if not validate_vpn_ip(ip.replace("-", ".")):
         raise HTTPException(status_code=400, detail="Invalid IP")
     ip = ip.replace("-", ".")
     user = get_user_by_ip(ip)
     stats = await _async_vpn_stats()
-    stat = next((s for s in stats if s["ip"] == ip), None)
+    stat = None
+    if server:
+        stat = next((s for s in stats if s["ip"] == ip and (s.get("server_alias") == server or server in s.get("server_alias", "") or s.get("server_alias", "") in server)), None)
+    if not stat:
+        stat = next((s for s in stats if s["ip"] == ip), None)
     if not user and not stat:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -181,7 +199,7 @@ async def user_detail(ip: str, admin=Depends(require_admin)):
     return {
         "ip": ip,
         "alias": user["alias"] if user and "alias" in user.keys() else "",
-        "server": stat["server_alias"] if stat else (user["protocol"] if user and "protocol" in user.keys() else ""),
+        "server": server or (stat["server_alias"] if stat else (user["protocol"] if user and "protocol" in user.keys() else "")),
         "online_emoji": stat["online_emoji"] if stat else "⚫",
         "last_seen": stat["last_seen"] if stat else "Неизвестно",
         "downloaded": stat["downloaded"] if stat else "—",
@@ -200,7 +218,8 @@ async def user_detail(ip: str, admin=Depends(require_admin)):
 async def get_user_conf_endpoint(ip: str, server: str = "", admin=Depends(require_admin)):
     """Возвращает выданный .conf файл абонента с учётом сервера (SE / RU)."""
     user_row = get_user(ip)
-    user = dict(user_row) if user_row else {"alias": "Абонент", "protocol": server or "VPN"}
+    target_server = server or (user_row["protocol"] if user_row and "protocol" in user_row.keys() else "")
+    user = dict(user_row) if user_row else {"alias": "Абонент", "protocol": target_server or "VPN"}
 
     conf_text = ""
     conf_dir = os.path.join(cfg.data_dir, "configs")
@@ -218,8 +237,8 @@ async def get_user_conf_endpoint(ip: str, server: str = "", admin=Depends(requir
                     except Exception:
                         pass
 
-    # 2. Если не найден с фильтром, ищем любой подходящий файл
-    if not conf_text and os.path.exists(conf_dir):
+    # 2. Если не найден с фильтром и сервер не был строго задан
+    if not conf_text and not server and os.path.exists(conf_dir):
         for fname in os.listdir(conf_dir):
             if fname.startswith(f"{ip}_") and fname.endswith(".conf"):
                 try:
@@ -235,7 +254,7 @@ async def get_user_conf_endpoint(ip: str, server: str = "", admin=Depends(requir
 
     link = ""
     if conf_text:
-        link = conf_to_amnezia_vpn_link(conf_text, user.get("alias", "Абонент"), user.get("protocol", "VPN"))
+        link = conf_to_amnezia_vpn_link(conf_text, user.get("alias", "Абонент"), target_server or user.get("protocol", "VPN"))
 
     qr_conf = _generate_qr_b64(conf_text) if conf_text else ""
     qr_link = _generate_qr_b64(link) if link else ""
@@ -249,7 +268,7 @@ async def get_user_conf_endpoint(ip: str, server: str = "", admin=Depends(requir
         "qr_link": qr_link,
         "ip": ip,
         "alias": user.get("alias", "Абонент"),
-        "protocol": user.get("protocol", "")
+        "protocol": target_server or user.get("protocol", "")
     }
 
 
@@ -350,6 +369,7 @@ async def set_speed(ip: str, payload: SpeedPayload, admin=Depends(require_admin)
     server = user["protocol"] if user and "protocol" in user.keys() else ""
     apply_limit(ip, payload.speed, server)
     update_user_field(ip, "speed_limit", payload.speed)
+    _invalidate_all_caches()
     log_audit("SET_SPEED", ip, f"speed={payload.speed},via=webapp", cfg.admin_id)
     return {"ok": True}
 
@@ -379,6 +399,7 @@ async def bind_user(ip: str, payload: BindPayload, admin=Depends(require_admin))
         remove_pending_tg_user(int(target_tg_id))
     except Exception:
         pass
+    _invalidate_all_caches()
     log_audit("BIND", ip, f"tg_id={target_tg_id},via=webapp", cfg.admin_id)
     return {"ok": True, "tg_id": target_tg_id}
 
@@ -389,6 +410,7 @@ async def unbind_user(ip: str, admin=Depends(require_admin)):
     if not validate_vpn_ip(ip):
         raise HTTPException(status_code=400, detail="Invalid IP")
     update_user_field(ip, "tg_user_id", None)
+    _invalidate_all_caches()
     log_audit("UNBIND", ip, "via=webapp", cfg.admin_id)
     return {"ok": True}
 
@@ -400,6 +422,7 @@ async def rename_user(ip: str, payload: RenamePayload, admin=Depends(require_adm
         raise HTTPException(status_code=400, detail="Invalid IP")
     clean = sanitize_alias(payload.alias)
     update_user_field(ip, "alias", clean)
+    _invalidate_all_caches()
     log_audit("RENAME", ip, f"alias={clean},via=webapp", cfg.admin_id)
     return {"ok": True, "alias": clean}
 
@@ -415,6 +438,7 @@ async def extend_user(ip: str, payload: ExtendPayload, admin=Depends(require_adm
         user = get_user_by_ip(ip)
         if user and user.get("tg_user_id"):
             clear_billing_notified(user["tg_user_id"])
+        _invalidate_all_caches()
         log_audit("EXTEND", ip, "lifetime=true,via=webapp", cfg.admin_id)
         return {"ok": True, "paid_until": "2099-12-31 23:59:59"}
     elif payload.date:
@@ -425,12 +449,14 @@ async def extend_user(ip: str, payload: ExtendPayload, admin=Depends(require_adm
             user = get_user_by_ip(ip)
             if user and user.get("tg_user_id"):
                 clear_billing_notified(user["tg_user_id"])
+            _invalidate_all_caches()
             log_audit("EXTEND", ip, f"exact_date={new_date},via=webapp", cfg.admin_id)
             return {"ok": True, "paid_until": new_date}
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format")
     else:
         new_date = extend_paid_until(ip, payload.days)
+        _invalidate_all_caches()
         log_audit("EXTEND", ip, f"days={payload.days},new={new_date},via=webapp", cfg.admin_id)
         return {"ok": True, "paid_until": new_date}
 
@@ -439,6 +465,7 @@ async def extend_user(ip: str, payload: ExtendPayload, admin=Depends(require_adm
 async def sync_users(admin=Depends(require_admin)):
     res = sync_db_with_vpn_peers()
     auto_apply_qos()
+    _invalidate_all_caches()
     log_audit("SYNC_PEERS", None, f"added={res.get('added', 0)}", cfg.admin_id)
     return {"ok": True, "added": res.get("added", 0), "total": res.get("total", 0)}
 
@@ -486,6 +513,7 @@ async def users_bulk_action(payload: BulkActionPayload, admin=Depends(require_ad
                 user = get_user_by_ip(ip)
                 server = user["protocol"] if user and "protocol" in user.keys() else ""
                 delete_peer(ip, server)
+                _delete_conf_files(ip, server)
                 delete_user(ip)
                 success += 1
             elif payload.action == 'speed':
@@ -498,20 +526,23 @@ async def users_bulk_action(payload: BulkActionPayload, admin=Depends(require_ad
         except Exception:
             errors += 1
     
+    _invalidate_all_caches()
     log_audit("BULK_ACTION", None, f"Action '{payload.action}' on {len(payload.ips)} users", cfg.admin_id)
     return {"ok": True, "msg": f"Success: {success}, Errors: {errors}"}
 
 
 @router.post("/api/user/{ip}/delete")
-async def delete_user_endpoint(ip: str, admin=Depends(require_admin)):
+async def delete_user_endpoint(ip: str, server: str = "", admin=Depends(require_admin)):
     ip = ip.replace("-", ".")
     if not validate_vpn_ip(ip):
         raise HTTPException(status_code=400, detail="Invalid IP")
     user = get_user_by_ip(ip)
-    server = user["protocol"] if user and "protocol" in user.keys() else ""
-    delete_peer(ip, server)
+    target_server = server or (user["protocol"] if user and "protocol" in user.keys() else "")
+    delete_peer(ip, target_server)
+    _delete_conf_files(ip, target_server)
     delete_user(ip)
-    log_audit("DELETE_PEER", ip, f"server={server},via=webapp", cfg.admin_id)
+    _invalidate_all_caches()
+    log_audit("DELETE_PEER", ip, f"server={target_server},via=webapp", cfg.admin_id)
     return {"ok": True}
 
 
@@ -556,17 +587,40 @@ async def create_user(payload: CreateUserPayload, admin=Depends(require_admin)):
         raise HTTPException(status_code=500, detail=str(e))
         
     try:
+        # Собираем все занятые IP из БД и всех нод для исключения конфликтов адресации
+        used_ips = set()
+        try:
+            db_all = get_all_users()
+            used_ips.update(db_all.keys())
+        except Exception as e:
+            logger.debug(f"Could not read db users for IP allocation: {e}")
+
+        # Целевой контейнер
         dump = run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "show", target_cont["iface"], "dump"])
-        lines = dump.split('\n')[1:]
-        used_ips = []
-        for line in lines:
+        for line in dump.split('\n')[1:]:
             parts = line.split('\t')
             if len(parts) >= 4:
-                ips = parts[3].split(',')
-                for ip in ips:
-                    ip = ip.split('/')[0].strip()
-                    if ip and ip != '(none)':
-                        used_ips.append(ip)
+                for ip_str in parts[3].split(','):
+                    ip_clean = ip_str.split('/')[0].strip()
+                    if ip_clean and ip_clean != '(none)':
+                        used_ips.add(ip_clean)
+
+        # Опрашиваем остальные контейнеры
+        for cont in cfg.vpn_containers:
+            if cont["name"] == target_cont["name"] and cont["host"] == target_cont["host"]:
+                continue
+            try:
+                c_dump = run_vpn_cmd(cont, [_wg_cmd(cont), "show", _wg_iface(cont), "dump"])
+                if c_dump and c_dump.stdout:
+                    for line in c_dump.stdout.split('\n')[1:]:
+                        parts = line.split('\t')
+                        if len(parts) >= 4:
+                            for ip_str in parts[3].split(','):
+                                ip_clean = ip_str.split('/')[0].strip()
+                                if ip_clean and ip_clean != '(none)':
+                                    used_ips.add(ip_clean)
+            except Exception:
+                pass
                         
         awg_conf = run_cmd(["docker", "exec", "-i", target_cont["name"], "cat", "/opt/amnezia/awg/awg0.conf"])
         server_addr_match = re.search(r'Address\s*=\s*([0-9\.]+)/', awg_conf)
@@ -583,7 +637,7 @@ async def create_user(payload: CreateUserPayload, admin=Depends(require_admin)):
                 break
                 
         if not new_ip:
-            raise HTTPException(status_code=500, detail="No free IPs in subnet")
+            raise HTTPException(status_code=500, detail="No free IPs in subnet across all nodes")
             
         server_psk = None
         try:
@@ -612,7 +666,8 @@ async def create_user(payload: CreateUserPayload, admin=Depends(require_admin)):
         # Генерация чистого текстового .conf файла (для AmneziaWG / WireGuard)
         client_conf_text = _build_client_conf(new_ip, priv_key, awg_conf, server_pub, clean_host, psk=server_psk)
         save_user_config(new_ip, client_conf_text)
-        _save_conf_to_file(new_ip, payload.alias, client_conf_text)
+        _save_conf_to_file(new_ip, payload.alias, client_conf_text, payload.server_alias)
+        _invalidate_all_caches()
 
         deep_link = conf_to_amnezia_vpn_link(client_conf_text, payload.alias, payload.server_alias)
         

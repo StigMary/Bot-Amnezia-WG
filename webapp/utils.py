@@ -139,13 +139,15 @@ PersistentKeepalive = 25
     return conf_text
 
 
-def _save_conf_to_file(ip: str, alias: str, conf_text: str) -> str:
-    """Сохраняет .conf файл в /data/configs/ с правами 0600."""
+def _save_conf_to_file(ip: str, alias: str, conf_text: str, server: str = "") -> str:
+    """Сохраняет .conf файл в /data/configs/ с правами 0600 и серверным тегом."""
     try:
         conf_dir = os.path.join(cfg.data_dir, "configs")
         os.makedirs(conf_dir, exist_ok=True)
         safe_alias = re.sub(r'[^a-zA-Z0-9_-]', '_', alias).strip('_') or 'client'
-        filepath = os.path.join(conf_dir, f"{ip}_{safe_alias}.conf")
+        srv_tag = "SE" if "SE" in server.upper() else ("RU" if "RU" in server.upper() else "")
+        fname = f"{ip}_{safe_alias}_{srv_tag}.conf" if srv_tag else f"{ip}_{safe_alias}.conf"
+        filepath = os.path.join(conf_dir, fname)
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(conf_text)
         os.chmod(filepath, 0o600)
@@ -153,3 +155,22 @@ def _save_conf_to_file(ip: str, alias: str, conf_text: str) -> str:
     except Exception as e:
         logger.error(f"Ошибка сохранения файла конфига: {e}")
         return ""
+
+
+def _delete_conf_files(ip: str, server: str = "") -> None:
+    """Удаляет файлы конфигов для абонента из /data/configs/."""
+    try:
+        conf_dir = os.path.join(cfg.data_dir, "configs")
+        if not os.path.exists(conf_dir):
+            return
+        srv_tag = "SE" if "SE" in server.upper() else ("RU" if "RU" in server.upper() else "")
+        for fname in os.listdir(conf_dir):
+            if fname.startswith(f"{ip}_") and (fname.endswith(".conf") or fname.endswith(".vpn")):
+                if srv_tag and srv_tag not in fname.upper():
+                    continue
+                try:
+                    os.remove(os.path.join(conf_dir, fname))
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.error(f"Ошибка удаления файлов конфига {ip}: {e}")
