@@ -681,9 +681,16 @@ async def get_server_services_endpoint(side: str, admin=Depends(require_admin)):
             services.append({"name": f"AmneziaWG ({c_name})", "status": "stopped", "action": "restart_container", "action_label": "🔄 Запуск"})
 
     if side_u == "RU" or "RU" in side_u or (target and target.get("host") == "local"):
-        # Systemd: xray
+        # Systemd / Docker: xray
         try:
-            st = subprocess.check_output(["systemctl", "is-active", "xray"], text=True).strip()
+            if target and target.get("host") != "local":
+                user = target.get("user") or "root"
+                dest = f"{user}@{target['host']}" if user and "@" not in target["host"] else target["host"]
+                st = subprocess.check_output(["ssh", "-p", str(target.get("port") or 22), "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", dest, "docker inspect --format '{{.State.Status}}' xray 2>/dev/null || systemctl is-active xray"], text=True).strip()
+            elif cfg.ru_host and (side_u == "RU" or "RU" in side_u):
+                st = run_ssh_cmd(cfg.ru_host, cfg.ru_ssh_port, "docker inspect --format '{{.State.Status}}' xray 2>/dev/null || systemctl is-active xray") or "unknown"
+            else:
+                st = subprocess.check_output(["systemctl", "is-active", "xray"], text=True).strip()
             services.append({"name": "Xray Core", "status": st, "action": "restart_xray", "action_label": "🔄 Рестарт"})
         except Exception:
             pass
@@ -809,7 +816,10 @@ async def server_action(side: str, action: str, admin=Depends(require_admin)):
 
     elif action == "restart_xray":
         if side == "RU":
-            threading.Thread(target=lambda: subprocess.run(["sudo", "systemctl", "restart", "xray"]), daemon=True).start()
+            if cfg.ru_host:
+                threading.Thread(target=lambda: run_ssh_cmd(cfg.ru_host, cfg.ru_ssh_port, "sudo docker restart xray 2>/dev/null || sudo systemctl restart xray"), daemon=True).start()
+            else:
+                threading.Thread(target=lambda: subprocess.run(["sudo", "systemctl", "restart", "xray"]), daemon=True).start()
             log_audit("RESTART_XRAY_RU", admin_id=cfg.admin_id)
             return {"ok": True, "msg": "Xray на RU перезапускается (~2 сек)"}
         return {"ok": False, "msg": "Xray доступен только на RU"}

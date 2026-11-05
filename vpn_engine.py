@@ -649,22 +649,43 @@ def get_ru_monitor_data(force: bool = False) -> dict:
         # 1. Xray status & PID
         xray_pid = "?"
         xray_ok = False
-        try:
-            pid = subprocess.check_output(["pgrep", "-x", "xray"], text=True).strip()
-            if pid:
-                xray_pid = pid.split()[0]
+        if cfg.ru_host:
+            res = run_ssh_cmd(
+                cfg.ru_host,
+                cfg.ru_ssh_port,
+                "pgrep -x xray || docker inspect -f '{{.State.Pid}}' xray 2>/dev/null",
+                timeout=5,
+            )
+            if res and res.strip():
+                xray_pid = res.strip().split()[0]
                 xray_ok = True
-        except Exception:
-            pass
+        else:
+            try:
+                pid = subprocess.check_output(["pgrep", "-x", "xray"], text=True).strip()
+                if pid:
+                    xray_pid = pid.split()[0]
+                    xray_ok = True
+            except Exception:
+                pass
 
         # 2. Connection to SE
         conn_sw = 0
-        se_dst = cfg.se_host or "127.0.0.1"
-        try:
-            out = subprocess.check_output(["ss", "-tnH", "state", "established", "dst", se_dst], text=True)
-            conn_sw = len([l for l in out.strip().splitlines() if l.strip()])
-        except Exception:
-            pass
+        se_dst = cfg.se_host or "132.243.240.76"
+        if cfg.ru_host:
+            res_conn = run_ssh_cmd(
+                cfg.ru_host,
+                cfg.ru_ssh_port,
+                f"ss -tnH state established dst {se_dst} || ss -tnH state established dport 443",
+                timeout=5,
+            )
+            if res_conn:
+                conn_sw = len([l for l in res_conn.strip().splitlines() if l.strip()])
+        else:
+            try:
+                out = subprocess.check_output(["ss", "-tnH", "state", "established", "dst", se_dst], text=True)
+                conn_sw = len([l for l in out.strip().splitlines() if l.strip()])
+            except Exception:
+                pass
 
         # 3. Топ по суммарному трафику за сессию
         all_stats = get_vpn_stats()
