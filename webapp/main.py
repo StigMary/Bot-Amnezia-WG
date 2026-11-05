@@ -2,6 +2,7 @@
 webapp/main.py — Главная точка входа FastAPI бэкенда для Telegram Mini App.
 Модульная архитектура: маршруты разделены по APIRouter в webapp/routers/.
 """
+import hmac
 import os
 import sys
 import threading
@@ -133,6 +134,11 @@ def on_startup():
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
+    secret = os.getenv("WEBHOOK_SECRET", "")
+    if secret:
+        got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not hmac.compare_digest(got, secret):
+            raise HTTPException(status_code=403, detail="Forbidden")
     try:
         data = await request.json()
         update = telebot.types.Update.de_json(data)
@@ -172,7 +178,11 @@ async def webhook_setup(request: Request, admin=Depends(require_admin)):
         full_url = f"{target_url}/webhook/telegram"
         bot.remove_webhook()
         time.sleep(0.5)
-        res = bot.set_webhook(url=full_url, max_connections=40)
+        res = bot.set_webhook(
+            url=full_url,
+            max_connections=40,
+            secret_token=os.getenv("WEBHOOK_SECRET") or None,
+        )
         return {"ok": res, "webhook_url": full_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -180,9 +190,12 @@ async def webhook_setup(request: Request, admin=Depends(require_admin)):
 
 @app.get("/{path:path}")
 async def catch_all(path: str):
-    file_path = os.path.join(static_dir, path)
-    if os.path.isfile(file_path):
-        return FileResponse(file_path)
+    if path.startswith("api/") or path == "api":
+        raise HTTPException(status_code=404, detail="Not Found")
+    base = os.path.realpath(static_dir)
+    candidate = os.path.realpath(os.path.join(base, path))
+    if os.path.commonpath([base, candidate]) == base and os.path.isfile(candidate):
+        return FileResponse(candidate)
     return FileResponse(
         os.path.join(static_dir, "index.html"),
         headers={

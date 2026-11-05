@@ -188,6 +188,63 @@ def _send_users_page(bot, chat_id, page, edit_msg_id=None, flt='all'):
     bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
 
 
+def _daily_analysis():
+    try:
+        from database import get_server_history
+        rows = get_server_history("SE", 24)
+        if not rows:
+            return "❌ Мало данных для анализа SE."
+        peak_cpu = max(rows, key=lambda x: x.get("cpu", 0))
+        peak_ram = max(rows, key=lambda x: x.get("ram", 0))
+        peak_time = datetime.fromtimestamp(peak_cpu["timestamp"]).strftime("%d.%m %H:%M")
+        return (
+            "📈 *Анализ SE за 24ч:*\n"
+            f"🔥 Пик CPU: `{peak_cpu.get('cpu', 0):.1f}%` ({peak_time})\n"
+            f"💾 Пик RAM: `{peak_ram.get('ram', 0):.1f}%`\n"
+            f"📊 Замеров: {len(rows)}"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка анализа SE: {e}")
+        return "❌ Ошибка при формировании анализа."
+
+
+def _generate_chart():
+    import tempfile
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.dates as mdates
+        import matplotlib.pyplot as plt
+
+        from database import get_server_history
+        rows = get_server_history("SE", 24)
+        if len(rows) < 2:
+            return None
+        times = [datetime.fromtimestamp(r["timestamp"]) for r in rows]
+        cpus = [float(r.get("cpu", 0)) for r in rows]
+        rams = [float(r.get("ram", 0)) for r in rows]
+
+        fig, ax = plt.subplots(figsize=(9, 4.5), dpi=120)
+        ax.plot(times, cpus, label="CPU (%)", color="#ff5722", linewidth=1.8, marker="o", markersize=3)
+        ax.plot(times, rams, label="RAM (%)", color="#2196f3", linewidth=1.8, marker="s", markersize=3)
+        ax.set_title("Нагрузка SE Server (последние 24ч)", fontsize=13, fontweight="bold", pad=10)
+        ax.set_ylim(0, 105)
+        ax.set_ylabel("Использование (%)", fontsize=10)
+        ax.legend(loc="upper left")
+        ax.grid(True, linestyle="--", alpha=0.5)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        fig.autofmt_xdate()
+        fig.tight_layout()
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        fig.savefig(tmp.name)
+        plt.close(fig)
+        return tmp.name
+    except Exception as e:
+        logger.error(f"Ошибка генерации графика SE: {e}")
+        return None
+
+
 def register(bot: telebot.TeleBot):
 
 # ── /start — админка ────────────────────────────────────────────────────
@@ -560,63 +617,6 @@ def register(bot: telebot.TeleBot):
 
             morning_digest(bot)
             bot.send_message(call.message.chat.id, "✅ Дайджест отправлен.")
-
-def _daily_analysis():
-    try:
-        from database import get_server_history
-        rows = get_server_history("SE", 24)
-        if not rows:
-            return "❌ Мало данных для анализа SE."
-        peak_cpu = max(rows, key=lambda x: x.get("cpu", 0))
-        peak_ram = max(rows, key=lambda x: x.get("ram", 0))
-        peak_time = datetime.fromtimestamp(peak_cpu["timestamp"]).strftime("%d.%m %H:%M")
-        return (
-            "📈 *Анализ SE за 24ч:*\n"
-            f"🔥 Пик CPU: `{peak_cpu.get('cpu', 0):.1f}%` ({peak_time})\n"
-            f"💾 Пик RAM: `{peak_ram.get('ram', 0):.1f}%`\n"
-            f"📊 Замеров: {len(rows)}"
-        )
-    except Exception as e:
-        logger.error(f"Ошибка анализа SE: {e}")
-        return "❌ Ошибка при формировании анализа."
-
-
-def _generate_chart():
-    import tempfile
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.dates as mdates
-        import matplotlib.pyplot as plt
-
-        from database import get_server_history
-        rows = get_server_history("SE", 24)
-        if len(rows) < 2:
-            return None
-        times = [datetime.fromtimestamp(r["timestamp"]) for r in rows]
-        cpus = [float(r.get("cpu", 0)) for r in rows]
-        rams = [float(r.get("ram", 0)) for r in rows]
-
-        fig, ax = plt.subplots(figsize=(9, 4.5), dpi=120)
-        ax.plot(times, cpus, label="CPU (%)", color="#ff5722", linewidth=1.8, marker="o", markersize=3)
-        ax.plot(times, rams, label="RAM (%)", color="#2196f3", linewidth=1.8, marker="s", markersize=3)
-        ax.set_title("Нагрузка SE Server (последние 24ч)", fontsize=13, fontweight="bold", pad=10)
-        ax.set_ylim(0, 105)
-        ax.set_ylabel("Использование (%)", fontsize=10)
-        ax.legend(loc="upper left")
-        ax.grid(True, linestyle="--", alpha=0.5)
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        fig.autofmt_xdate()
-        fig.tight_layout()
-
-        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        fig.savefig(tmp.name)
-        plt.close(fig)
-        return tmp.name
-    except Exception as e:
-        logger.error(f"Ошибка генерации графика SE: {e}")
-        return None
-
 
     # ── #8: График / Нагрузка — обработчик выбора сервера ────────────────────
     @bot.callback_query_handler(func=lambda c: c.data.startswith("analysis_chart|"))

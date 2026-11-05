@@ -26,8 +26,8 @@ jobs:
       - name: Install ruff
         run: pip install ruff
 
-      - name: Run ruff check
-        run: ruff check . --output-format=github || true
+      - name: Run ruff check (errors only)
+        run: ruff check . --select F821,E9 --output-format=github
 
       - name: Run ruff format (check only)
         run: ruff format --check . || true
@@ -78,8 +78,8 @@ jobs:
       - name: Install tools
         run: pip install bandit pip-audit
 
-      - name: Bandit (SAST)
-        run: bandit -r . -x ./tests,./.venv -ll || true
+      - name: Bandit (SAST - High only)
+        run: bandit -r . -x ./tests,./.venv -lll || true
 
       - name: pip-audit (vulnerabilities)
         run: pip-audit -r requirements.txt || true

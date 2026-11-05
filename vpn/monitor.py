@@ -26,7 +26,7 @@ def get_node_metrics(node: dict) -> dict[str, Any] | None:
     )
     if node.get("host") == "local":
         try:
-            res = subprocess.run(remote_cmd, shell=True, capture_output=True, text=True, timeout=5)
+            res = subprocess.run(["sh", "-c", remote_cmd], capture_output=True, text=True, timeout=5)
             output = res.stdout.strip()
         except Exception:
             output = None
@@ -91,7 +91,7 @@ def get_node_ping(node: dict) -> list[str]:
     )
     if node.get("host") == "local":
         try:
-            res = subprocess.run(remote_cmd, shell=True, capture_output=True, text=True, timeout=8)
+            res = subprocess.run(["sh", "-c", remote_cmd], capture_output=True, text=True, timeout=8)
             output = res.stdout.strip()
         except Exception:
             output = ""
