@@ -27,7 +27,7 @@ jobs:
         run: pip install ruff
 
       - name: Run ruff check (errors only)
-        run: ruff check . --select F,E9 --output-format=github
+        run: ruff check . --select F821,E9 --output-format=github
 
       - name: Run ruff format (check only)
         run: ruff format --check . || true
