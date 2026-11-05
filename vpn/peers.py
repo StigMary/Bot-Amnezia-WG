@@ -24,6 +24,14 @@ _names_cache: dict[str, dict] = {}  # container_name -> {data: dict, expires: fl
 _names_lock = threading.Lock()
 
 
+def invalidate_stats_cache() -> None:
+    """Сбрасывает кэш статистики VPN-пиров."""
+    global _stats_cache, _stats_cache_ts
+    with _stats_lock:
+        _stats_cache = []
+        _stats_cache_ts = 0.0
+
+
 def _wg_cmd(cont: dict) -> str:
     """Имя бинарника WG: 'awg' (AmneziaWG) или 'wg'. Конфигурируется через cont['wg_cmd']."""
     return cont.get("wg_cmd", "awg")
@@ -169,9 +177,12 @@ def get_vpn_stats(force: bool = False) -> list[dict[str, Any]]:
 
 def delete_peer(ip: str, server_alias: str = "") -> None:
     """Удаляет пира из WireGuard-интерфейса и сохраняет конфиг."""
-    target = next((c for c in cfg.vpn_containers if c["alias"] == server_alias), None)
+    target = None
+    if server_alias:
+        target = next((c for c in cfg.vpn_containers if c["alias"] == server_alias or server_alias in c["alias"] or c["alias"] in server_alias), None)
     targets = [target] if target else list(cfg.vpn_containers)
 
+    deleted_any = False
     for t in targets:
         wg = _wg_cmd(t)
         iface = _wg_iface(t)
@@ -189,6 +200,9 @@ def delete_peer(ip: str, server_alias: str = "") -> None:
         if pub_key:
             run_vpn_cmd(t, [wg, "set", iface, "peer", pub_key, "remove"])
             run_vpn_cmd(t, [f"{wg}-quick", "save", iface])
+            deleted_any = True
+
+    invalidate_stats_cache()
 
 
 def sync_db_with_vpn_peers() -> dict[str, Any]:

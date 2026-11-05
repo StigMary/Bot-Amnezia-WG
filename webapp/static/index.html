@@ -1238,7 +1238,7 @@
             if (res && res.ok) {
                 showToast('Telegram аккаунт отвязан', 'success');
                 document.getElementById('user-bind-panel').style.display = 'none';
-                openUserModal(currentUserIp);
+                openUserModal(currentUserIp, currentUserServer);
                 loadUsers();
             }
         }
@@ -1247,7 +1247,8 @@
         async function openUserModal(ip, server) {
             currentUserIp = ip;
             currentUserServer = server || '';
-            const data = await apiCallSafe(`/user/${ip}`);
+            const srvParam = currentUserServer ? `?server=${encodeURIComponent(currentUserServer)}` : '';
+            const data = await apiCallSafe(`/user/${ip}${srvParam}`);
             if (!data) return;
             
             let currentUser = data;
@@ -1361,10 +1362,12 @@
             if (!currentUserIp) return;
             tg.showConfirm(`Удалить профиль ${currentUserIp}? Это полностью удалит клиента из VPN!`, async (confirm) => {
                 if (confirm) {
-                    const res = await apiCall(`/user/${currentUserIp}/delete`, 'POST');
+                    const srvParam = currentUserServer ? `?server=${encodeURIComponent(currentUserServer)}` : '';
+                    const res = await apiCall(`/user/${currentUserIp}/delete${srvParam}`, 'POST');
                     if (res && res.ok) {
                         tg.showAlert('Профиль удален');
                         closeUserModal();
+                        loadUsers();
                     }
                 }
             });
