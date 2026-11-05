@@ -16,15 +16,9 @@ UX-улучшения v2:
 import contextlib
 import os
 import subprocess
-
-import matplotlib
-import psutil
-
-matplotlib.use("Agg")
 from datetime import datetime
 
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
+import psutil
 import telebot
 from telebot.types import (
     InlineKeyboardButton,
@@ -590,6 +584,11 @@ def _daily_analysis():
 def _generate_chart():
     import tempfile
     try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.dates as mdates
+        import matplotlib.pyplot as plt
+
         from database import get_server_history
         rows = get_server_history("SE", 24)
         if len(rows) < 2:
