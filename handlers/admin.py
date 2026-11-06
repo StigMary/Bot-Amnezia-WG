@@ -27,6 +27,7 @@ from telebot.types import (
     KeyboardButtonRequestUser,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
+    WebAppInfo,
 )
 
 from config import cfg, logger
@@ -278,7 +279,6 @@ def register(bot: telebot.TeleBot):
         )
 
         import time as _t
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
 
         wh_url = os.getenv("WEBHOOK_URL", "https://experienced-volume-herbs-remedy.trycloudflare.com").strip().rstrip("/")
         app_url = f"{wh_url}?t={int(_t.time())}"

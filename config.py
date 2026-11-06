@@ -70,7 +70,7 @@ class Config:
     anomaly_ram_threshold: int = 85
 
     # --- VPN / Биллинг ---
-    vpn_subnet: str = "10.0.0.0/8"
+    vpn_subnet: str = field(default_factory=lambda: os.getenv("VPN_SUBNET", "10.8.0.0/16"))
     users_per_page: int = 7
     allowed_speeds: frozenset = field(default_factory=lambda: frozenset({"10", "30", "50", "100", "max", "punish"}))
 

@@ -71,13 +71,30 @@ from webapp.routers import (
 
 app = FastAPI(title="VPN Admin WebApp", docs_url=None, redoc_url=None)
 
+# Заголовки безопасности
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    return resp
+
 # Настройка CORS
+cors_origins = [
+    "https://t.me",
+    "https://web.telegram.org",
+    "http://127.0.0.1:8080",
+    "http://localhost:8080",
+]
+if os.getenv("WEBHOOK_URL"):
+    cors_origins.append(os.getenv("WEBHOOK_URL").rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://t.me", "https://web.telegram.org", "http://127.0.0.1", "localhost"],
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Telegram-Init-Data"],
 )
 
 # Подключение модульных маршрутов

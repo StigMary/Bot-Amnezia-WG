@@ -147,7 +147,6 @@ def _start_speed_sampler():
                     parts = line.split("\t")
                     if len(parts) >= 8:
                         pkey = parts[0]
-                        endpoint = parts[2]
                         allowed_ips = parts[3].split("/")[0].strip()
                         hs = int(parts[4]) if parts[4].isdigit() else 0
                         rx2 = int(parts[5]) if parts[5].isdigit() else 0

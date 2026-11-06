@@ -203,6 +203,7 @@ def delete_peer(ip: str, server_alias: str = "") -> None:
             deleted_any = True
 
     invalidate_stats_cache()
+    return deleted_any
 
 
 def sync_db_with_vpn_peers() -> dict[str, Any]:
