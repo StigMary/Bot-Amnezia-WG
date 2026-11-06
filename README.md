@@ -101,6 +101,13 @@ sudo systemctl restart vpn-bot vpn-webapp
 Система поддерживает **любое количество VPN-серверов** (1, 2, 3, 5+).
 
 ### Как добавить новый сервер:
+
+> [!IMPORTANT]
+> Для защиты от MITM-атак используется строгая проверка хостов (`StrictHostKeyChecking=yes`). Перед добавлением удалённой ноды добавьте её отпечаток в `known_hosts`:
+> ```bash
+> ssh-keyscan -p ПОРТ IP_СЕРВЕРА >> ~/.ssh/known_hosts
+> ```
+
 Выполните интерактивную команду:
 ```bash
 python3 manage.py add-node
@@ -129,7 +136,9 @@ python3 manage.py test
 | :--- | :---: | :--- |
 | `BOT_TOKEN` | **Да** | API-токен бота от [@BotFather](https://t.me/BotFather). |
 | `ADMIN_ID` | **Да** | Числовой Telegram ID администратора (узнать в [@userinfobot](https://t.me/userinfobot)). |
+| `WEBHOOK_SECRET` | **Да** | Секретный токен для проверки подлинности входящих вебхуков от Telegram (`openssl rand -hex 32`). |
 | `ADMIN_API_KEY` | Нет | Секретный токен для внешнего API-доступа к FastAPI (для выгрузки бэкапов и автоматизации). |
+| `VPN_SUBNET` | Нет | Разрешённый диапазон VPN-адресов клиентов (по умолчанию `10.8.0.0/16`). |
 | `GROUP_CHAT_ID` | Нет | ID закрытого канала/чата (если включена проверка подписки абонента, иначе `0`). |
 | `WEBHOOK_URL` | Нет | Публичный HTTPS-адрес панели (Cloudflare Tunnel или ваш домен) для кнопки WebApp. |
 | `NODE_1` | Нет | Описание сервера #1 в формате `ИМЯ\|local(или IP)\|PORT\|USER\|CONTAINER\|IFACE`. |

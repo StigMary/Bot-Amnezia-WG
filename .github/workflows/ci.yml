@@ -58,10 +58,22 @@ jobs:
 
       - name: Import smoke test
         env:
-          BOT_TOKEN: "0:dummy"
+          BOT_TOKEN: "123:dummy_bot_token"
           ADMIN_ID: "1"
+          ADMIN_API_KEY: "ci_test_key_ci_test_key_ci_test_key"
+          NODE_1: "Node|local|22|root|amnezia-awg|awg0"
         run: |
-          python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p in pathlib.Path('.').rglob('*.py') if '.venv' not in str(p)]"
+          python -c "import webapp.main; print('Import OK')"
+
+      - name: Run pytest security suite
+        env:
+          BOT_TOKEN: "123:dummy_bot_token"
+          ADMIN_ID: "1"
+          ADMIN_API_KEY: "ci_test_key_ci_test_key_ci_test_key"
+          NODE_1: "Node|local|22|root|amnezia-awg|awg0"
+        run: |
+          pip install pytest httpx
+          pytest -v
 
   security:
     name: Security scan (bandit + pip-audit)
@@ -79,7 +91,7 @@ jobs:
         run: pip install bandit pip-audit
 
       - name: Bandit (SAST - High only)
-        run: bandit -r . -x ./tests,./.venv -lll || true
+        run: bandit -r . -x ./tests,./.venv -lll
 
       - name: pip-audit (vulnerabilities)
         run: pip-audit -r requirements.txt || true
