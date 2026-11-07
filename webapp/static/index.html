@@ -216,13 +216,13 @@
                     <div class="loading" style="font-size:12px;">Загрузка служб...</div>
                 </div>
             </div>
-            <!-- RU Activity Tab (only shown for RU) -->
+            <!-- Server Activity Section (works for all servers: SE, RU, Node N) -->
             <div id="ru-activity-section" style="display:none; margin-top: 20px;">
                 <div style="height:1px; background:var(--border-light); margin-bottom:16px;"></div>
                 <div class="tabs-wrapper" style="margin-bottom:12px;">
                     <div class="tab-btn active" id="ru-tab-top" onclick="switchRuTab('top')">🏆 Топ</div>
                     <div class="tab-btn" id="ru-tab-now" onclick="switchRuTab('now')">🟢 Сейчас</div>
-                    <div class="tab-btn" id="ru-tab-events" onclick="switchRuTab('events')">⚡ Xray</div>
+                    <div class="tab-btn" id="ru-tab-events" onclick="switchRuTab('events')">⚡ Статус</div>
                 </div>
                 <div id="ru-tab-content">
                     <div class="loading">Загрузка...</div>
@@ -608,24 +608,33 @@
 
         let _ruActiveTab = 'top';
         let _ruMonitorData = null;
+        let _serverMonitorCache = {};
         let currentTicketId = null;
 
-        function getRuMonitorHtml(data) {
+        function getServerMonitorHtml(alias, id) {
+            const data = _serverMonitorCache[id] || _serverMonitorCache[alias] || (alias && alias.includes('RU') ? _serverMonitorCache['RU'] || _ruMonitorData : null);
+            const rowId = `srv-mon-row-${escapeHtml(id || alias)}`;
             if (!data || data.error) {
-                return '<div id="ru-xray-row" style="margin-top: 8px; font-size: 12px; display:none;"></div>';
+                return `<div id="${rowId}" style="margin-top: 8px; font-size: 12px; display:none;"></div>`;
             }
             const xOk = data.xray_ok;
             const conn = data.conn_sw || 0;
             const active = data.active_now || [];
             const activeNames = active.slice(0, 3).map(c => escapeHtml(c.name)).join(', ');
+            const connLabel = data.is_ru ? `🌐 ${conn} соед. → SE` : `🌐 ${conn} соед.`;
+            const svcLabel = data.is_se ? '🔗 Xray / Reality' : '🔗 Xray';
             return `
-                <div id="ru-xray-row" style="margin-top: 8px; font-size: 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                    <span style="color:${xOk ? 'var(--success)' : 'var(--danger)'}">${xOk ? '🔗 Xray ✅' : '🔗 Xray ❌'}</span>
+                <div id="${rowId}" style="margin-top: 8px; font-size: 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                    <span style="color:${xOk ? 'var(--success)' : 'var(--danger)'}">${svcLabel} ${xOk ? '✅' : '❌'}</span>
                     <span style="color:var(--text-muted);">|</span>
-                    <span style="color:var(--hint-color);">🌐 ${conn} соед. → SE</span>
+                    <span style="color:var(--hint-color);">${connLabel}</span>
                     ${activeNames ? `<span style="color:var(--text-muted);">|</span><span style="color:var(--hint-color);">👥 ${activeNames}</span>` : ''}
                 </div>
             `;
+        }
+
+        function getRuMonitorHtml(data) {
+            return getServerMonitorHtml('RU', 'RU');
         }
 
         // Universal In-App Dialog System for iOS Standalone & Telegram
@@ -1021,10 +1030,15 @@
                                     </div>
                                 </div>
                                 ${speedHtml}
-                                ${sAlias.includes('RU') ? getRuMonitorHtml(_ruMonitorData) : ''}
+                                ${getServerMonitorHtml(sAlias, sId)}
                             </div>
                         `;
                     }).join('');
+
+                    // Загружаем мониторинг для каждого сервера
+                    servers.forEach(s => {
+                        fetchServerMonitor(s.id || s.alias);
+                    });
                 }
             }
         }
@@ -1433,9 +1447,7 @@
         
         function openServerModal(side, displayName) {
             currentServerSide = decodeURIComponent(side);
-            if (currentServerSide.includes('RU')) currentServerSide = 'RU';
-            else if (currentServerSide.includes('SE')) currentServerSide = 'SE';
-            const title = displayName || (currentServerSide === 'SE' ? '🇸🇪 SE Server (Main)' : (currentServerSide === 'RU' ? '🇷🇺 RU Server (Node)' : currentServerSide));
+            const title = displayName || currentServerSide;
             document.getElementById('server-modal-title').innerText = title;
             document.getElementById('server-actions').innerHTML = `
                 <button class="btn btn-warning" onclick="doServerAction('restart_container', this)">🔄 Рестарт контейнера</button>
@@ -1444,22 +1456,21 @@
                 <button class="btn btn-secondary" onclick="openChartModal()" style="grid-column: span 1;">📊 График нагрузки (24ч)</button>
             `;
             const activitySection = document.getElementById('ru-activity-section');
-            if (title.includes('RU')) {
-                activitySection.style.display = 'block';
-                _ruActiveTab = 'top';
-                document.getElementById('ru-tab-top').classList.add('active');
-                document.getElementById('ru-tab-now').classList.remove('active');
-                document.getElementById('ru-tab-events').classList.remove('active');
-                if (_ruMonitorData) {
-                    renderRuTab(_ruActiveTab);
-                } else {
-                    fetchRuMonitor();
-                }
+            activitySection.style.display = 'block';
+            _ruActiveTab = 'top';
+            document.getElementById('ru-tab-top').classList.add('active');
+            document.getElementById('ru-tab-now').classList.remove('active');
+            document.getElementById('ru-tab-events').classList.remove('active');
+
+            const srvData = _serverMonitorCache[currentServerSide] || _serverMonitorCache[title];
+            if (srvData) {
+                renderRuTab(_ruActiveTab);
             } else {
-                activitySection.style.display = 'none';
+                fetchServerMonitor(currentServerSide);
             }
             fetchServerServices(currentServerSide);
-            document.getElementById('server-modal').classList.add('active'); document.getElementById('modal-overlay').classList.add('active');
+            document.getElementById('server-modal').classList.add('active');
+            document.getElementById('modal-overlay').classList.add('active');
             tg.BackButton.show();
         }
 
@@ -1473,60 +1484,63 @@
 
         function renderRuTab(tab) {
             const cont = document.getElementById('ru-tab-content');
-            if (!_ruMonitorData) {
+            const data = _serverMonitorCache[currentServerSide] || _serverMonitorCache['RU'] || _ruMonitorData;
+            if (!data) {
                 cont.innerHTML = '<div class="loading">Загрузка...</div>';
                 return;
             }
-            if (_ruMonitorData.error) {
-                cont.innerHTML = `<div style="color:var(--danger); font-size:13px;">❌ ${_ruMonitorData.error}</div>`;
+            if (data.error) {
+                cont.innerHTML = `<div style="color:var(--danger); font-size:13px;">❌ ${escapeHtml(data.error)}</div>`;
                 return;
             }
             const medals = ['🥇','🥈','🥉'];
             if (tab === 'top') {
-                const top = _ruMonitorData.top_total || [];
+                const top = data.top_total || [];
                 if (!top.length) { cont.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Данных пока нет</div>'; return; }
                 cont.innerHTML = `
                     <div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Топ по трафику (за сессию)</div>
                     ${top.map((c,i) => `
                         <div class="ru-client-row">
                             <span>${medals[i] || (i+1)+'.'}</span>
-                            <span class="ru-client-name">${c.name}</span>
+                            <span class="ru-client-name">${escapeHtml(c.name)}</span>
                             <span style="color:var(--hint-color); font-size:11px;">${c.ip}</span>
                             <span class="traffic-val rx" style="font-size:12px; margin-left:auto;">↓${c.dn_gb.toFixed(2)} ↑${c.up_gb.toFixed(2)} GB</span>
                         </div>`).join('')}
                 `;
             } else if (tab === 'now') {
-                const now = _ruMonitorData.active_now || [];
-                const conn = _ruMonitorData.conn_sw || 0;
-                let html = `<div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Активны сейчас &nbsp;·&nbsp; 🌐 ${conn} соед. → SE</div>`;
+                const now = data.active_now || [];
+                const conn = data.conn_sw || 0;
+                const connLabel = data.is_ru ? `🌐 ${conn} соед. → SE` : `🌐 ${conn} соед.`;
+                let html = `<div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Активны сейчас &nbsp;·&nbsp; ${connLabel}</div>`;
                 if (!now.length) {
                     html += '<div style="color:var(--text-muted); font-size:13px;">🔴 Никто не активен (30с)</div>';
                 } else {
                     html += now.map(c => `
                         <div class="ru-client-row">
                             <span>🟢</span>
-                            <span class="ru-client-name">${c.name}</span>
+                            <span class="ru-client-name">${escapeHtml(c.name)}</span>
                             <span style="color:var(--hint-color); font-size:11px;">${c.ip}</span>
                             <span style="font-size:11px; margin-left:auto; color:var(--text-muted);">↑${(c.up_kb*8/1024/(c.interval_sec||30)).toFixed(2)}&nbsp;↓${(c.dn_kb*8/1024/(c.interval_sec||30)).toFixed(2)}&nbsp;Мбит/с</span>
                         </div>`).join('');
                 }
                 cont.innerHTML = html;
             } else if (tab === 'events') {
-                const ev = _ruMonitorData.events || [];
-                const xOk = _ruMonitorData.xray_ok;
-                const xPid = _ruMonitorData.xray_pid || '?';
+                const ev = data.events || [];
+                const xOk = data.xray_ok;
+                const xPid = data.xray_pid || '?';
+                const svcName = data.is_se ? '3X-UI / Xray Core' : (data.is_ru ? 'Xray Dokodemo Bridge' : 'VPN / Xray');
                 let html = `<div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">
-                    Xray: ${xOk ? '<span style="color:var(--success)">&#x2705; Работает</span>' : '<span style="color:var(--danger)">&#x274c; Не запущен</span>'}&nbsp;
+                    ${svcName}: ${xOk ? '<span style="color:var(--success)">&#x2705; Работает</span>' : '<span style="color:var(--danger)">&#x274c; Не запущен</span>'}&nbsp;
                     PID&nbsp;<code>${xPid}</code></div>`;
                 if (!ev.length) {
-                    html += '<div style="color:var(--success); font-size:13px;">✅ Крашей не зафиксировано</div>';
+                    html += '<div style="color:var(--success); font-size:13px;">✅ Все службы работают стабильно</div>';
                 } else {
                     html += ev.slice().reverse().map(e => `
                         <div class="ru-client-row" style="align-items:flex-start;">
                             <span>${e.is_crash ? '⚠️' : '✅'}</span>
                             <div>
-                                <div style="font-size:12px;">${e.text}</div>
-                                <div style="font-size:10px; color:var(--text-muted);">${e.ts}</div>
+                                <div style="font-size:12px;">${escapeHtml(e.text)}</div>
+                                <div style="font-size:10px; color:var(--text-muted);">${escapeHtml(e.ts)}</div>
                             </div>
                         </div>`).join('');
                 }
@@ -1534,35 +1548,50 @@
             }
         }
 
-        async function fetchRuMonitor() {
+        async function fetchServerMonitor(side) {
+            if (!side) return;
             try {
-                const data = await apiCall('/ru_monitor');
-                _ruMonitorData = data;
-                // Обновляем строку Xray в карточке дашборда
-                const row = document.getElementById('ru-xray-row');
-                if (row && data && !data.error) {
-                    const xOk = data.xray_ok;
-                    const conn = data.conn_sw || 0;
-                    const active = data.active_now || [];
-                    const activeNames = active.slice(0,3).map(c => c.name).join(', ');
-                    row.style.display = 'flex';
-                    row.style.gap = '8px';
-                    row.style.flexWrap = 'wrap';
-                    row.style.alignItems = 'center';
-                    row.innerHTML = `
-                        <span style="color:${xOk ? 'var(--success)' : 'var(--danger)'}">${xOk ? '🔗 Xray ✅' : '🔗 Xray ❌'}</span>
-                        <span style="color:var(--text-muted);">|</span>
-                        <span style="color:var(--hint-color);">🌐 ${conn} соед. → SE</span>
-                        ${activeNames ? `<span style="color:var(--text-muted);">|</span><span style="color:var(--hint-color);">👥 ${activeNames}</span>` : ''}
-                    `;
-                }
-                // Если модаль RU открыта — обновляем вкладку
-                if (currentServerSide === 'RU' && document.getElementById('server-modal').classList.contains('active')) {
-                    renderRuTab(_ruActiveTab);
+                const data = await apiCallSafe(`/server/${encodeURIComponent(side)}/monitor`);
+                if (data && !data.error) {
+                    _serverMonitorCache[side] = data;
+                    if (data.server_alias) _serverMonitorCache[data.server_alias] = data;
+                    if (data.server_id) _serverMonitorCache[data.server_id] = data;
+                    if (data.is_ru) _ruMonitorData = data;
+
+                    // Обновляем плашку мониторинга на карточке дашборда
+                    const targetId = data.server_id || side;
+                    const row = document.getElementById(`srv-mon-row-${targetId}`) || document.getElementById(`srv-mon-row-${side}`) || (data.server_alias ? document.getElementById(`srv-mon-row-${data.server_alias}`) : null);
+                    if (row) {
+                        const xOk = data.xray_ok;
+                        const conn = data.conn_sw || 0;
+                        const active = data.active_now || [];
+                        const activeNames = active.slice(0, 3).map(c => escapeHtml(c.name)).join(', ');
+                        const connLabel = data.is_ru ? `🌐 ${conn} соед. → SE` : `🌐 ${conn} соед.`;
+                        const svcLabel = data.is_se ? '🔗 Xray / Reality' : '🔗 Xray';
+                        row.style.display = 'flex';
+                        row.style.gap = '8px';
+                        row.style.flexWrap = 'wrap';
+                        row.style.alignItems = 'center';
+                        row.innerHTML = `
+                            <span style="color:${xOk ? 'var(--success)' : 'var(--danger)'}">${svcLabel} ${xOk ? '✅' : '❌'}</span>
+                            <span style="color:var(--text-muted);">|</span>
+                            <span style="color:var(--hint-color);">${connLabel}</span>
+                            ${activeNames ? `<span style="color:var(--text-muted);">|</span><span style="color:var(--hint-color);">👥 ${activeNames}</span>` : ''}
+                        `;
+                    }
+
+                    // Если модаль этого сервера открыта — обновляем вкладку
+                    if ((currentServerSide === side || currentServerSide === data.server_id || currentServerSide === data.server_alias) && document.getElementById('server-modal').classList.contains('active')) {
+                        renderRuTab(_ruActiveTab);
+                    }
                 }
             } catch (e) {
                 // Таймаут — молча игнорируем
             }
+        }
+
+        function fetchRuMonitor() {
+            return fetchServerMonitor('RU');
         }
 
         function closeServerModal() {

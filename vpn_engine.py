@@ -18,6 +18,7 @@ from vpn import (
     get_online_emoji,
     get_ru_metrics,
     get_ru_monitor_data,
+    get_server_monitor_data,
     get_ru_ping,
     get_vpn_stats,
     run_ssh_cmd,
@@ -45,5 +46,6 @@ __all__ = [
     "get_node_ping",
     "get_ru_metrics",
     "get_ru_monitor_data",
+    "get_server_monitor_data",
     "get_ru_ping",
 ]

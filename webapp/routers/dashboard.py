@@ -10,6 +10,7 @@ from vpn_engine import (
     get_node_metrics,
     get_node_ping,
     get_ru_monitor_data,
+    get_server_monitor_data,
 )
 from webapp.auth import require_admin
 from webapp.metrics import (
@@ -139,7 +140,14 @@ async def ping(server: str = "", admin=Depends(require_admin)):
 @router.get("/api/ru_monitor")
 async def ru_monitor(admin=Depends(require_admin)):
     """Возвращает данные мониторинга RU: статус Xray, активные клиенты, топ, события."""
-    data = get_ru_monitor_data()
+    data = get_server_monitor_data("RU")
+    return data
+
+
+@router.get("/api/server/{side}/monitor")
+async def server_monitor(side: str, admin=Depends(require_admin)):
+    """Универсальный мониторинг любого сервера (SE, RU, Node N): статус Xray/служб, активные клиенты, топ."""
+    data = get_server_monitor_data(side)
     return data
 
 

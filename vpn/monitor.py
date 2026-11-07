@@ -109,11 +109,11 @@ def get_ru_ping() -> list:
     return get_node_ping(ru) if ru else []
 
 
-# ─── Мониторинг RU: живой замер скорости (дельта) ─────────────────────────────
+# ─── Мониторинг серверов: живой замер скорости (дельта) ───────────────────────
 
-_ru_monitor_cache: dict = {}
-_ru_monitor_cache_ts: float = 0.0
-_RU_MONITOR_TTL = 3  # кэш на 3 сек
+_server_monitor_cache: dict = {}
+_server_monitor_cache_ts: dict = {}
+_SERVER_MONITOR_TTL = 3  # кэш на 3 сек
 
 _speed_samples: dict = {}  # pkey -> (rx, tx, time)
 _current_active_now: list = []
@@ -212,67 +212,115 @@ def _start_speed_sampler():
 _start_speed_sampler()
 
 
-def get_ru_monitor_data(force: bool = False) -> dict:
-    """Возвращает живые данные мониторинга RU: статус Xray, реальная скорость активных клиентов, топ."""
-    global _ru_monitor_cache, _ru_monitor_cache_ts
+def get_server_monitor_data(server_identifier: str = "RU", force: bool = False) -> dict:
+    """Возвращает живые данные мониторинга любого сервера (SE, RU, Node N): статус Xray/3X-UI, скорость активных клиентов, топ."""
+    global _server_monitor_cache, _server_monitor_cache_ts
 
-    if not force and time.time() - _ru_monitor_cache_ts < _RU_MONITOR_TTL and _ru_monitor_cache:
-        return _ru_monitor_cache
+    target_key = (server_identifier or "RU").strip().upper()
+    now_ts = time.time()
+    if not force and target_key in _server_monitor_cache:
+        if now_ts - _server_monitor_cache_ts.get(target_key, 0.0) < _SERVER_MONITOR_TTL:
+            return _server_monitor_cache[target_key]
 
     try:
         _start_speed_sampler()
 
-        # 1. Xray status & PID на удалённом RU сервере
+        # 1. Поиск целевого контейнера / сервера
+        target = None
+        for c in cfg.vpn_containers:
+            c_id = str(c.get("id") or "").upper()
+            c_alias = str(c.get("alias") or "").upper()
+            if target_key in (c_id, c_alias) or target_key in c_alias.split() or (target_key in ("RU", "SE") and target_key in c_id):
+                target = c
+                break
+
+        if not target:
+            if "RU" in target_key:
+                target = next((c for c in cfg.vpn_containers if "RU" in c.get("alias", "").split() or "🇷🇺" in c.get("alias", "") or c.get("id") == "RU"), None)
+            elif "SE" in target_key:
+                target = next((c for c in cfg.vpn_containers if "SE" in c.get("alias", "").split() or "🇸🇪" in c.get("alias", "") or c.get("id") == "SE"), None)
+
+        if not target and cfg.vpn_containers:
+            target = cfg.vpn_containers[0]
+
+        if not target:
+            return {"error": f"Сервер '{server_identifier}' не найден"}
+
+        is_local = (target.get("host") == "local")
+        host = target.get("host")
+        port = str(target.get("port") or "22")
+        user = target.get("user") or "root"
+        is_ru = "RU" in target.get("alias", "").split() or "🇷🇺" in target.get("alias", "") or target.get("id") == "RU"
+        is_se = "SE" in target.get("alias", "").split() or "🇸🇪" in target.get("alias", "") or target.get("id") == "SE"
+        srv_alias = target.get("alias", "")
+
+        # 2. Xray / 3X-UI статус & PID
         xray_pid = "?"
         xray_ok = False
-        ru_node = next((c for c in cfg.vpn_containers if "RU" in c.get("alias", "").upper()), None)
-        ru_host = ru_node.get("host") if ru_node else cfg.ru_host
-        ru_port = str(ru_node.get("port") or cfg.ru_ssh_port or "22") if ru_node else str(cfg.ru_ssh_port or "22")
-        ru_user = ru_node.get("user") or "root" if ru_node else "root"
+        conn_sw = 0
 
-        if ru_host and ru_host != "local":
-            pid_out = run_ssh_cmd(ru_host, ru_port, "pgrep -x xray || docker inspect -f '{{.State.Pid}}' xray 2>/dev/null", timeout=5, user=ru_user)
-            if pid_out and pid_out.split()[0].isdigit():
-                xray_pid = pid_out.split()[0]
-                xray_ok = True
-        else:
+        if is_local:
             try:
-                pid = subprocess.check_output(["pgrep", "-x", "xray"], text=True).strip()
-                if pid:
-                    xray_pid = pid.split()[0]
+                pid_out = subprocess.check_output(
+                    ["sh", "-c", "docker inspect -f '{{.State.Pid}}' 3x-ui 2>/dev/null || docker inspect -f '{{.State.Pid}}' xray 2>/dev/null || pgrep -f xray-linux-amd64 | head -1 || pgrep -x xray | head -1"],
+                    text=True, timeout=3
+                ).strip()
+                if pid_out and pid_out.split()[0].isdigit() and pid_out.split()[0] != "0":
+                    xray_pid = pid_out.split()[0]
                     xray_ok = True
             except Exception:
                 pass
 
-        # 2. Connection to SE (Reality tunnel inbound to port 443 from RU node)
-        conn_sw = 0
-        ru_ip_clean = (ru_host or "").split("@")[-1].strip()
-        try:
-            # На SE сервере проверяем входящие Reality соединения на порт 443
-            cmd = ["ss", "-tnH", "state", "established", "(", "sport", "=", ":443", ")"]
-            out = subprocess.check_output(cmd, text=True)
-            lines = [l for l in out.strip().splitlines() if l.strip()]
-            if ru_ip_clean and ru_ip_clean != "local":
-                conn_sw = len([l for l in lines if ru_ip_clean in l])
-            else:
+            try:
+                cmd = ["ss", "-tnH", "state", "established", "(", "sport", "=", ":443", ")"]
+                out = subprocess.check_output(cmd, text=True)
+                lines = [l for l in out.strip().splitlines() if l.strip()]
                 conn_sw = len(lines)
-        except Exception:
-            # Fallback: опрос через SSH на RU ноде
-            if ru_host and ru_host != "local":
+            except Exception:
+                pass
+        else:
+            pid_cmd = "docker inspect -f '{{.State.Pid}}' xray 2>/dev/null || docker inspect -f '{{.State.Pid}}' 3x-ui 2>/dev/null || pgrep -x xray || pgrep -f xray-linux-amd64 | head -1"
+            pid_out = run_ssh_cmd(host, port, pid_cmd, timeout=5, user=user)
+            if pid_out and pid_out.split()[0].isdigit() and pid_out.split()[0] != "0":
+                xray_pid = pid_out.split()[0]
+                xray_ok = True
+
+            if is_ru:
+                ru_ip_clean = (host or "").split("@")[-1].strip()
                 try:
-                    se_target = (cfg.se_host or "132.243.240.76").split("@")[-1].strip()
-                    ru_out = run_ssh_cmd(ru_host, ru_port, f"ss -tnH state established dst {se_target}:443", timeout=4, user=ru_user)
-                    if ru_out:
-                        conn_sw = len([l for l in ru_out.strip().splitlines() if l.strip()])
+                    cmd = ["ss", "-tnH", "state", "established", "(", "sport", "=", ":443", ")"]
+                    out = subprocess.check_output(cmd, text=True)
+                    lines = [l for l in out.strip().splitlines() if l.strip()]
+                    conn_sw = len([l for l in lines if ru_ip_clean in l]) if ru_ip_clean else len(lines)
+                except Exception:
+                    try:
+                        se_target = (cfg.se_host or "132.243.240.76").split("@")[-1].strip()
+                        ru_out = run_ssh_cmd(host, port, f"ss -tnH state established dst {se_target}:443", timeout=4, user=user)
+                        if ru_out:
+                            conn_sw = len([l for l in ru_out.strip().splitlines() if l.strip()])
+                    except Exception:
+                        pass
+            else:
+                try:
+                    out = run_ssh_cmd(host, port, "ss -tnH state established '( dport = :443 or sport = :443 )' | wc -l", timeout=4, user=user)
+                    if out and out.strip().isdigit():
+                        conn_sw = int(out.strip())
                 except Exception:
                     pass
 
-        # 3. Топ по суммарному трафику за сессию
+        # 3. Топ абонентов конкретного сервера по суммарному трафику
         all_stats = get_vpn_stats()
-        ru_peers = [s for s in all_stats if "RU" in s.get("server_alias", "")] or all_stats
+        srv_peers = [s for s in all_stats if s.get("server_alias") == srv_alias]
+        if not srv_peers:
+            if is_ru:
+                srv_peers = [s for s in all_stats if s.get("ip", "").startswith("10.8.1.")]
+            elif is_se:
+                srv_peers = [s for s in all_stats if s.get("ip", "").startswith("10.8.5.")]
+            else:
+                srv_peers = all_stats
 
         top_total = []
-        for p in ru_peers:
+        for p in srv_peers:
             top_total.append({
                 "name": p.get("db_alias", p.get("ip", "?")),
                 "ip": p.get("ip", "?"),
@@ -281,48 +329,75 @@ def get_ru_monitor_data(force: bool = False) -> dict:
             })
         top_total.sort(key=lambda x: x["dn_gb"], reverse=True)
 
+        # 4. Активные клиенты на этом сервере
         with _active_lock:
-            # Строгая фильтрация только клиентов RU сервера (исключаем 10.8.5.* и SE ноды)
-            ru_active = [
+            server_active = [
                 c for c in _current_active_now
-                if ("RU" in c.get("server_alias", "").split() or "🇷🇺" in c.get("server_alias", "") or c.get("ip", "").startswith("10.8.1."))
-                and not c.get("ip", "").startswith("10.8.5.")
+                if c.get("server_alias") == srv_alias
             ]
+            if not server_active:
+                if is_ru:
+                    server_active = [
+                        c for c in _current_active_now
+                        if ("RU" in c.get("server_alias", "").split() or "🇷🇺" in c.get("server_alias", "") or c.get("ip", "").startswith("10.8.1."))
+                        and not c.get("ip", "").startswith("10.8.5.")
+                    ]
+                elif is_se:
+                    server_active = [
+                        c for c in _current_active_now
+                        if ("SE" in c.get("server_alias", "").split() or "🇸🇪" in c.get("server_alias", "") or c.get("ip", "").startswith("10.8.5."))
+                        and not c.get("ip", "").startswith("10.8.1.")
+                    ]
 
-        # Если фоновый замер ещё не успел отработать (первый запуск), берём онлайн пиров из ru_peers
-        if not ru_active:
+        # Fallback если фоновый замер ещё стартует
+        if not server_active:
             now_t = time.time()
-            for p in ru_peers:
+            for p in srv_peers:
                 hs = p.get("handshake_ts", 0)
                 if (now_t - hs) < 180 and hs > 0:
-                    ru_active.append({
+                    server_active.append({
                         "name": p.get("db_alias", p.get("ip", "?")),
                         "ip": p.get("ip", "?"),
-                        "server_alias": p.get("server_alias", "RU"),
+                        "server_alias": srv_alias,
                         "up_kb": 0.0,
                         "dn_kb": 0.0,
                         "interval_sec": 4.0,
                         "total_kb": 0.0,
                         "last_seen_sec": int(now_t - hs),
                     })
-            ru_active.sort(key=lambda x: x["last_seen_sec"])
+            server_active.sort(key=lambda x: x["last_seen_sec"])
 
-        events = [
-            {"is_crash": False, "text": f"Xray Dokodemo Bridge работает штатно (PID {xray_pid})" if xray_ok else "Xray мост не запущен", "ts": "сейчас"},
-            {"is_crash": False, "text": "AmneziaAWG2 активен, туннель к SE стабилен", "ts": "сейчас"}
-        ]
+        events = []
+        if xray_ok:
+            svc_name = "Xray Dokodemo Bridge" if is_ru else ("3X-UI / Xray Core" if is_se else "Xray Core")
+            events.append({"is_crash": False, "text": f"{svc_name} работает штатно (PID {xray_pid})", "ts": "сейчас"})
+        else:
+            events.append({"is_crash": False, "text": "Служба Xray не активна на этой ноде", "ts": "сейчас"})
+
+        c_name = target.get("name") or "amnezia-awg2"
+        tunnel_msg = "туннель к SE стабилен" if is_ru else ("входящие Reality соединения активны" if is_se else "интерфейс активен")
+        events.append({"is_crash": False, "text": f"AmneziaWG ({c_name}) активен, {tunnel_msg}", "ts": "сейчас"})
 
         data = {
+            "server_alias": srv_alias,
+            "server_id": target.get("id", target_key),
+            "is_ru": is_ru,
+            "is_se": is_se,
             "xray_ok": xray_ok,
             "xray_pid": xray_pid,
             "conn_sw": conn_sw,
             "top_total": top_total,
-            "active_now": ru_active,
+            "active_now": server_active,
             "events": events
         }
-        _ru_monitor_cache = data
-        _ru_monitor_cache_ts = time.time()
+        _server_monitor_cache[target_key] = data
+        _server_monitor_cache_ts[target_key] = time.time()
         return data
     except Exception as e:
-        logger.error(f"Error in get_ru_monitor_data: {e}")
+        logger.error(f"Error in get_server_monitor_data for {server_identifier}: {e}")
         return {"error": str(e)}
+
+
+def get_ru_monitor_data(force: bool = False) -> dict:
+    """Обратная совместимость: возвращает живые данные мониторинга RU."""
+    return get_server_monitor_data("RU", force=force)

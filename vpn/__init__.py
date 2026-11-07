@@ -26,6 +26,7 @@ from vpn.monitor import (
     get_ru_metrics,
     get_ru_monitor_data,
     get_ru_ping,
+    get_server_monitor_data,
 )
 
 __all__ = [
@@ -46,5 +47,6 @@ __all__ = [
     "get_node_ping",
     "get_ru_metrics",
     "get_ru_monitor_data",
+    "get_server_monitor_data",
     "get_ru_ping",
 ]
