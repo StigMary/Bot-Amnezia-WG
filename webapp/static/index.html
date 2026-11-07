@@ -58,7 +58,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
             <h2 style="margin:0;">Абоненты</h2>
             <div>
-                <button class="btn btn-primary" style="width:auto; padding:6px 14px; margin:0; margin-right: 8px; font-weight:600;" onclick="openCreateUserModal()">➕ Новый абонент</button>
+                <button class="btn btn-secondary" style="width:auto; padding:6px 12px; margin:0; margin-right: 8px; opacity:0.85; border:1px dashed var(--hint-color, #4b5563);" onclick="openCreateUserModal()">➕ Новый <span style="font-size:10px; background:rgba(255,255,255,0.12); padding:1px 5px; border-radius:4px; margin-left:4px;">Скоро</span></button>
                 <button class="btn btn-outline" style="width:auto; padding:6px 12px; margin:0;" onclick="toggleBulkMode()" id="bulk-btn">Выбрать</button>
             </div>
         </div>
@@ -823,41 +823,13 @@
                 
         let availableServers = [];
         
-        async function openCreateUserModal() {
-            const modal = document.getElementById('create-user-modal');
-            const overlay = document.getElementById('modal-overlay');
-            const serverSelect = document.getElementById('create-user-server');
-            const aliasInput = document.getElementById('create-user-alias');
-            
-            aliasInput.value = '';
-            serverSelect.innerHTML = '<option value="">Загрузка серверов...</option>';
-            
-            modal.classList.add('active');
-            overlay.classList.add('active');
-            
-            try {
-                const srv = await apiCallSafe('/servers');
-                let servers = [];
-                if (srv && srv.servers && srv.servers.length) {
-                    servers = srv.servers;
-                } else if (srv && Array.isArray(srv)) {
-                    servers = srv;
-                }
-                
-                if (servers.length) {
-                    availableServers = servers;
-                    serverSelect.innerHTML = servers.map(s => {
-                        const sCont = s.container || s.name || 'amnezia-awg2';
-                        const sAlias = s.alias || s.name || 'Server';
-                        return `<option value="${escapeHtml(sCont)}|${escapeHtml(sAlias)}">${escapeHtml(sAlias)}</option>`;
-                    }).join('');
-                } else {
-                    serverSelect.innerHTML = '<option value="amnezia-awg2|🇸🇪 SE Server 1">🇸🇪 SE Server 1</option><option value="amnezia-awg2|🇷🇺 RU Server">🇷🇺 RU Server</option>';
-                }
-            } catch (e) {
-                serverSelect.innerHTML = '<option value="amnezia-awg2|🇸🇪 SE Server 1">🇸🇪 SE Server 1</option><option value="amnezia-awg2|🇷🇺 RU Server">🇷🇺 RU Server</option>';
+        function openCreateUserModal() {
+            const msg = "⏳ Функция создания абонентов в панели находится в разработке.\n\nСоздавайте клиентов в приложении Amnezia VPN — они автоматически синхронизируются и появятся здесь!";
+            if (tg && typeof tg.showAlert === 'function') {
+                tg.showAlert(msg);
+            } else {
+                alert(msg);
             }
-            aliasInput.focus();
         }
         
         function closeCreateUserModal() {
