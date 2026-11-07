@@ -35,9 +35,10 @@ def _generate_qr_b64(text: str) -> str:
 
 
 def _clean_host(raw_host: str) -> str:
-    """Очищает хост от alex@ и заменяет local на публичный IP."""
+    """Очищает хост от alex@/user@ и заменяет local на публичный IP сервера."""
     if not raw_host or raw_host == "local":
-        return cfg.se_host or cfg.ru_host or "127.0.0.1"
+        target = cfg.se_host or os.getenv("SE_HOST") or "132.243.240.76"
+        return target.split("@")[-1].strip()
     return raw_host.split("@")[-1].strip()
 
 

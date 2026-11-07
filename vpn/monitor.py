@@ -237,14 +237,28 @@ def get_ru_monitor_data(force: bool = False) -> dict:
             except Exception:
                 pass
 
-        # 2. Connection to SE
+        # 2. Connection to SE (Reality tunnel inbound to port 443 from RU node)
         conn_sw = 0
-        se_dst = cfg.se_host or "127.0.0.1"
+        ru_ip_clean = (ru_host or "").split("@")[-1].strip()
         try:
-            out = subprocess.check_output(["ss", "-tnH", "state", "established", "dst", se_dst], text=True)
-            conn_sw = len([l for l in out.strip().splitlines() if l.strip()])
+            # На SE сервере проверяем входящие Reality соединения на порт 443
+            cmd = ["ss", "-tnH", "state", "established", "(", "sport", "=", ":443", ")"]
+            out = subprocess.check_output(cmd, text=True)
+            lines = [l for l in out.strip().splitlines() if l.strip()]
+            if ru_ip_clean and ru_ip_clean != "local":
+                conn_sw = len([l for l in lines if ru_ip_clean in l])
+            else:
+                conn_sw = len(lines)
         except Exception:
-            pass
+            # Fallback: опрос через SSH на RU ноде
+            if ru_host and ru_host != "local":
+                try:
+                    se_target = (cfg.se_host or "132.243.240.76").split("@")[-1].strip()
+                    ru_out = run_ssh_cmd(ru_host, ru_port, f"ss -tnH state established dst {se_target}:443", timeout=4, user=ru_user)
+                    if ru_out:
+                        conn_sw = len([l for l in ru_out.strip().splitlines() if l.strip()])
+                except Exception:
+                    pass
 
         # 3. Топ по суммарному трафику за сессию
         all_stats = get_vpn_stats()

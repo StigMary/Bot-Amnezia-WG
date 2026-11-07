@@ -291,60 +291,68 @@ async def regenerate_user_conf(ip: str, admin=Depends(require_admin)):
             break
 
     if not target_cont:
-        target_cont = cfg.vpn_containers[2] if len(cfg.vpn_containers) > 2 and "RU" in cfg.vpn_containers[2].get("alias", "") else cfg.vpn_containers[0]
+        target_cont = cfg.vpn_containers[0] if cfg.vpn_containers else None
+    if not target_cont:
+        raise HTTPException(status_code=400, detail="VPN server not found")
 
-    is_local = target_cont["host"] == "local"
-    ssh_prefix = []
-    if not is_local:
-        port = target_cont["port"] or "22"
-        host = target_cont['host']
-        if "@" not in host:
-            host = f"root@{host}"
-        ssh_prefix = ["ssh", "-p", port, "-o", "StrictHostKeyChecking=no", host]
-
-    def run_cmd(cmd):
-        full_cmd = ssh_prefix + cmd
-        res = subprocess.run(full_cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            raise Exception(f"Command failed: {' '.join(full_cmd)} -> {res.stderr}")
+    def run_cmd(cmd_args: list[str]) -> str:
+        res = run_vpn_cmd(target_cont, cmd_args, capture=True, timeout=15)
+        if not res or res.returncode != 0:
+            err = res.stderr.strip() if res and res.stderr else "timeout or connection failed"
+            raise Exception(f"Command failed on {target_cont.get('alias')}: {' '.join(cmd_args)} -> {err}")
         return res.stdout.strip()
 
     try:
         # Генерируем новые ключи
-        priv_key = run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "genkey"])
-        pub_key = subprocess.run(ssh_prefix + ["docker", "exec", "-i", target_cont["name"], "awg", "pubkey"], input=priv_key, capture_output=True, text=True).stdout.strip()
+        priv_key = run_cmd(["awg", "genkey"])
+        pk_res = run_vpn_cmd(target_cont, ["sh", "-c", f"echo {priv_key} | awg pubkey"], capture=True, timeout=10)
+        pub_key = pk_res.stdout.strip() if pk_res and pk_res.returncode == 0 else ""
+        if not pub_key:
+            raise HTTPException(status_code=500, detail="Could not compute public key for client")
 
         # Ищем старый публичный ключ пира по IP, чтобы удалить его
-        dump = run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "show", target_cont["iface"], "dump"])
+        dump = run_cmd(["awg", "show", target_cont["iface"], "dump"])
         for line in dump.splitlines()[1:]:
             parts = line.split("\t")
             if len(parts) >= 4:
                 old_pub = parts[0].strip()
                 ips = [p.split("/")[0].strip() for p in parts[3].split(",")]
                 if ip in ips:
-                    run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "set", target_cont["iface"], "peer", old_pub, "remove"])
+                    run_cmd(["awg", "set", target_cont["iface"], "peer", old_pub, "remove"])
                     break
 
         # Считываем конфиг сервера
-        awg_conf = run_cmd(["docker", "exec", "-i", target_cont["name"], "cat", "/opt/amnezia/awg/awg0.conf"])
-        server_priv_m = re.search(r'PrivateKey\s*=\s*(\S+)', awg_conf)
-        server_pub = subprocess.run(ssh_prefix + ["docker", "exec", "-i", target_cont["name"], "awg", "pubkey"], input=server_priv_m.group(1), capture_output=True, text=True).stdout.strip()
+        awg_conf = run_cmd(["cat", f"/opt/amnezia/awg/{target_cont['iface']}.conf"])
+        server_pub = ""
+        pub_res = run_vpn_cmd(target_cont, ["cat", "/opt/amnezia/awg/wireguard_server_public_key.key"], capture=True, timeout=5)
+        if pub_res and pub_res.returncode == 0 and pub_res.stdout.strip():
+            server_pub = pub_res.stdout.strip()
+        else:
+            server_priv_m = re.search(r'PrivateKey\s*=\s*(\S+)', awg_conf)
+            if server_priv_m:
+                sp_res = run_vpn_cmd(target_cont, ["sh", "-c", f"echo {server_priv_m.group(1)} | awg pubkey"], capture=True, timeout=10)
+                if sp_res and sp_res.returncode == 0:
+                    server_pub = sp_res.stdout.strip()
+        if not server_pub:
+            raise HTTPException(status_code=500, detail="Could not retrieve server public key")
 
         # Считываем PSK если доступен
         server_psk = None
-        try:
-            server_psk = run_cmd(["docker", "exec", "-i", target_cont["name"], "cat", "/opt/amnezia/awg/wireguard_psk.key"]).strip()
-        except Exception:
-            pass
+        psk_res = run_vpn_cmd(target_cont, ["cat", "/opt/amnezia/awg/wireguard_psk.key"], capture=True, timeout=5)
+        if psk_res and psk_res.returncode == 0 and psk_res.stdout.strip():
+            server_psk = psk_res.stdout.strip()
 
         # Устанавливаем пир
-        try:
-            run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "set", target_cont["iface"], "peer", pub_key, "preshared-key", "/opt/amnezia/awg/wireguard_psk.key", "allowed-ips", f"{ip}/32"])
-        except Exception:
-            run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "set", target_cont["iface"], "peer", pub_key, "allowed-ips", f"{ip}/32"])
+        if server_psk:
+            try:
+                run_cmd(["awg", "set", target_cont["iface"], "peer", pub_key, "preshared-key", "/opt/amnezia/awg/wireguard_psk.key", "allowed-ips", f"{ip}/32"])
+            except Exception:
+                run_cmd(["awg", "set", target_cont["iface"], "peer", pub_key, "allowed-ips", f"{ip}/32"])
+        else:
+            run_cmd(["awg", "set", target_cont["iface"], "peer", pub_key, "allowed-ips", f"{ip}/32"])
 
-        conf_file = "/opt/amnezia/awg/" + target_cont["iface"] + ".conf"
-        run_cmd(["docker", "exec", "-i", target_cont["name"], "awg-quick", "save", conf_file])
+        conf_file = f"/opt/amnezia/awg/{target_cont['iface']}.conf"
+        run_cmd(["awg-quick", "save", conf_file])
 
         clean_host = _clean_host(target_cont["host"])
         new_conf = _build_client_conf(ip, priv_key, awg_conf, server_pub, clean_host, psk=server_psk)
@@ -558,38 +566,41 @@ async def get_vpn_containers(admin=Depends(require_admin)):
 async def create_user(payload: CreateUserPayload, admin=Depends(require_admin)):
     target_cont = None
     for c in cfg.vpn_containers:
-        if c["name"] == payload.server_name and c["alias"] == payload.server_alias:
+        if c.get("name") == payload.server_name and c.get("alias") == payload.server_alias:
             target_cont = c
             break
             
     if not target_cont:
+        for c in cfg.vpn_containers:
+            if c.get("alias") == payload.server_alias or c.get("name") == payload.server_name:
+                target_cont = c
+                break
+
+    if not target_cont and cfg.vpn_containers:
+        target_cont = cfg.vpn_containers[0]
+        
+    if not target_cont:
         raise HTTPException(status_code=400, detail="Server not found")
-        
-    is_local = target_cont["host"] == "local"
-    ssh_prefix = []
-    if not is_local:
-        port = target_cont["port"] or "22"
-        host = target_cont['host']
-        if "@" not in host:
-            host = f"root@{host}"
-        ssh_prefix = ["ssh", "-p", port, "-o", "StrictHostKeyChecking=no", host]
-        
-    def run_cmd(cmd):
-        full_cmd = ssh_prefix + cmd
-        res = subprocess.run(full_cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            raise Exception(f"Command failed: {' '.join(full_cmd)} -> {res.stderr}")
+
+    def run_cmd(cmd_args: list[str]) -> str:
+        res = run_vpn_cmd(target_cont, cmd_args, capture=True, timeout=15)
+        if not res or res.returncode != 0:
+            err = res.stderr.strip() if res and res.stderr else "timeout or connection failed"
+            raise Exception(f"Command failed on {target_cont.get('alias')}: {' '.join(cmd_args)} -> {err}")
         return res.stdout.strip()
-        
+
     try:
-        priv_key = run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "genkey"])
-        pub_key = subprocess.run(ssh_prefix + ["docker", "exec", "-i", target_cont["name"], "awg", "pubkey"], input=priv_key, capture_output=True, text=True).stdout.strip()
+        priv_key = run_cmd(["awg", "genkey"])
+        pk_res = run_vpn_cmd(target_cont, ["sh", "-c", f"echo {priv_key} | awg pubkey"], capture=True, timeout=10)
+        pub_key = pk_res.stdout.strip() if pk_res and pk_res.returncode == 0 else ""
+        if not pub_key:
+            raise HTTPException(status_code=500, detail="Could not compute public key for client")
     except Exception as e:
         logger.error(f"Error generating keys for peer: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-        
+
     try:
-        # Собираем все занятые IP из БД и всех нод для исключения конфликтов адресации
+        # Собираем занятые IP для исключения конфликтов адресации
         used_ips = set()
         try:
             db_all = get_all_users()
@@ -597,9 +608,17 @@ async def create_user(payload: CreateUserPayload, admin=Depends(require_admin)):
         except Exception as e:
             logger.debug(f"Could not read db users for IP allocation: {e}")
 
-        # Целевой контейнер
-        dump = run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "show", target_cont["iface"], "dump"])
-        for line in dump.split('\n')[1:]:
+        # Считываем конфиг целевого сервера
+        awg_conf = run_cmd(["cat", f"/opt/amnezia/awg/{target_cont['iface']}.conf"])
+        server_addr_match = re.search(r'Address\s*=\s*([0-9\.]+)/', awg_conf)
+        if not server_addr_match:
+            raise HTTPException(status_code=500, detail=f"Could not find server address in {target_cont['iface']}.conf")
+        server_ip = server_addr_match.group(1)
+        base_ip = '.'.join(server_ip.split('.')[:3])
+
+        # Опрашиваем пиры целевого сервера
+        dump = run_cmd(["awg", "show", target_cont["iface"], "dump"])
+        for line in dump.splitlines()[1:]:
             parts = line.split('\t')
             if len(parts) >= 4:
                 for ip_str in parts[3].split(','):
@@ -607,73 +626,61 @@ async def create_user(payload: CreateUserPayload, admin=Depends(require_admin)):
                     if ip_clean and ip_clean != '(none)':
                         used_ips.add(ip_clean)
 
-        # Опрашиваем остальные контейнеры
-        for cont in cfg.vpn_containers:
-            if cont["name"] == target_cont["name"] and cont["host"] == target_cont["host"]:
-                continue
-            try:
-                c_dump = run_vpn_cmd(cont, [_wg_cmd(cont), "show", _wg_iface(cont), "dump"])
-                if c_dump and c_dump.stdout:
-                    for line in c_dump.stdout.split('\n')[1:]:
-                        parts = line.split('\t')
-                        if len(parts) >= 4:
-                            for ip_str in parts[3].split(','):
-                                ip_clean = ip_str.split('/')[0].strip()
-                                if ip_clean and ip_clean != '(none)':
-                                    used_ips.add(ip_clean)
-            except Exception as e:
-                logger.warning(f"Error checking used IPs on {cont.get('alias')}: {e}")
-                        
-        awg_conf = run_cmd(["docker", "exec", "-i", target_cont["name"], "cat", "/opt/amnezia/awg/awg0.conf"])
-        server_addr_match = re.search(r'Address\s*=\s*([0-9\.]+)/', awg_conf)
-        if not server_addr_match:
-            raise HTTPException(status_code=500, detail="Could not find server address in awg0.conf")
-        server_ip = server_addr_match.group(1)
-        base_ip = '.'.join(server_ip.split('.')[:3])
-        
         new_ip = None
         for i in range(2, 254):
             test_ip = f"{base_ip}.{i}"
             if test_ip != server_ip and test_ip not in used_ips:
                 new_ip = test_ip
                 break
-                
+
         if not new_ip:
-            raise HTTPException(status_code=500, detail="No free IPs in subnet across all nodes")
-            
+            raise HTTPException(status_code=500, detail="No free IPs in subnet")
+
         server_psk = None
-        try:
-            server_psk = run_cmd(["docker", "exec", "-i", target_cont["name"], "cat", "/opt/amnezia/awg/wireguard_psk.key"]).strip()
-        except Exception:
-            pass
+        psk_res = run_vpn_cmd(target_cont, ["cat", "/opt/amnezia/awg/wireguard_psk.key"], capture=True, timeout=5)
+        if psk_res and psk_res.returncode == 0 and psk_res.stdout.strip():
+            server_psk = psk_res.stdout.strip()
 
-        try:
-            run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "set", target_cont["iface"], "peer", pub_key, "preshared-key", "/opt/amnezia/awg/wireguard_psk.key", "allowed-ips", f"{new_ip}/32"])
-        except Exception:
-            run_cmd(["docker", "exec", "-i", target_cont["name"], "awg", "set", target_cont["iface"], "peer", pub_key, "allowed-ips", f"{new_ip}/32"])
+        if server_psk:
+            try:
+                run_cmd(["awg", "set", target_cont["iface"], "peer", pub_key, "preshared-key", "/opt/amnezia/awg/wireguard_psk.key", "allowed-ips", f"{new_ip}/32"])
+            except Exception:
+                run_cmd(["awg", "set", target_cont["iface"], "peer", pub_key, "allowed-ips", f"{new_ip}/32"])
+        else:
+            run_cmd(["awg", "set", target_cont["iface"], "peer", pub_key, "allowed-ips", f"{new_ip}/32"])
 
-        conf_file = "/opt/amnezia/awg/" + target_cont["iface"] + ".conf"
-        run_cmd(["docker", "exec", "-i", target_cont["name"], "awg-quick", "save", conf_file])
-        
-        server_pub_match = re.search(r'PrivateKey\s*=\s*(\S+)', awg_conf)
-        server_priv = server_pub_match.group(1)
-        server_pub = subprocess.run(ssh_prefix + ["docker", "exec", "-i", target_cont["name"], "awg", "pubkey"], input=server_priv, capture_output=True, text=True).stdout.strip()
-        
+        conf_file = f"/opt/amnezia/awg/{target_cont['iface']}.conf"
+        run_cmd(["awg-quick", "save", conf_file])
+
+        server_pub = ""
+        pub_res = run_vpn_cmd(target_cont, ["cat", "/opt/amnezia/awg/wireguard_server_public_key.key"], capture=True, timeout=5)
+        if pub_res and pub_res.returncode == 0 and pub_res.stdout.strip():
+            server_pub = pub_res.stdout.strip()
+        else:
+            server_priv_m = re.search(r'PrivateKey\s*=\s*(\S+)', awg_conf)
+            if server_priv_m:
+                sp_res = run_vpn_cmd(target_cont, ["sh", "-c", f"echo {server_priv_m.group(1)} | awg pubkey"], capture=True, timeout=10)
+                if sp_res and sp_res.returncode == 0:
+                    server_pub = sp_res.stdout.strip()
+
         clean_host = _clean_host(target_cont["host"])
-        
-        update_user_field(new_ip, "alias", payload.alias)
-        update_user_field(new_ip, "protocol", payload.server_alias)
+
+        user_alias = payload.alias.strip() or f"Абонент {new_ip.split('.')[-1]}"
+        srv_alias = target_cont.get("alias", payload.server_alias)
+
+        update_user_field(new_ip, "alias", user_alias)
+        update_user_field(new_ip, "protocol", srv_alias)
         update_user_field(new_ip, "speed_limit", "max")
-        
-        # Генерация чистого текстового .conf файла (для AmneziaWG / WireGuard)
+
         client_conf_text = _build_client_conf(new_ip, priv_key, awg_conf, server_pub, clean_host, psk=server_psk)
         save_user_config(new_ip, client_conf_text)
-        _save_conf_to_file(new_ip, payload.alias, client_conf_text, payload.server_alias)
+        _save_conf_to_file(new_ip, user_alias, client_conf_text, srv_alias)
         _invalidate_all_caches()
 
-        deep_link = conf_to_amnezia_vpn_link(client_conf_text, payload.alias, payload.server_alias)
-        
-        return {"ok": True, "link": deep_link, "conf": client_conf_text, "ip": new_ip, "alias": payload.alias}
+        deep_link = conf_to_amnezia_vpn_link(client_conf_text, user_alias, srv_alias)
+
+        log_audit("CREATE_USER", new_ip, f"alias={user_alias}, server={srv_alias}", cfg.admin_id)
+        return {"ok": True, "link": deep_link, "conf": client_conf_text, "ip": new_ip, "alias": user_alias}
     except Exception as e:
         logger.error(f"Error creating user: {e}")
         raise HTTPException(status_code=500, detail=str(e))

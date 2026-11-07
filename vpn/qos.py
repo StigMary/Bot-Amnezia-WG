@@ -19,22 +19,23 @@ def get_class_id(ip_str: str) -> str:
     return f"{int(parts[2]):x}{int(parts[3]):02x}"
 
 
-def _run_remote_tc(host: str, port: str, tc_cmd_str: str, timeout: int = 15) -> None:
+def _run_remote_tc(host: str, port: str, tc_cmd_str: str, timeout: int = 15, user: str = "root") -> None:
     """Выполняет TC-команды напрямую на хосте по SSH."""
     remote_timeout = max(5, timeout - 2)
+    dest = f"{user}@{host}" if user and "@" not in host else host
     ssh_cmd = (
         ["ssh"] + _SSH_BASE_OPTS
-        + ["-p", str(port), host,
+        + ["-p", str(port), dest,
            f"timeout {remote_timeout} sudo sh -c {shlex.quote(tc_cmd_str)}"]
     )
     try:
         res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
         if res.returncode != 0 and res.stderr:
-            logger.warning(f"TC на {host}: {res.stderr.strip()[:200]}")
+            logger.warning(f"TC на {dest}: {res.stderr.strip()[:200]}")
     except subprocess.TimeoutExpired:
-        logger.warning(f"TC таймаут на {host}:{port}")
+        logger.warning(f"TC таймаут на {dest}:{port}")
     except Exception as e:
-        logger.error(f"TC ошибка ({host}:{port}): {e}")
+        logger.error(f"TC ошибка ({dest}:{port}): {e}")
 
 
 def apply_limit(ip: str, speed: str, server_alias: str) -> bool:
@@ -61,18 +62,19 @@ def apply_limit(ip: str, speed: str, server_alias: str) -> bool:
     if speed != "max":
         rate = "1kbit" if speed == "punish" else f"{speed}mbit"
         ceil = rate
-        burst = "16k" if speed == "punish" else "128k"
-        ingress_burst = "16k" if speed == "punish" else "256k"
+        burst = "16k" if speed == "punish" else "500k"
+        cburst = "16k" if speed == "punish" else "500k"
+        ingress_burst = "16k" if speed == "punish" else "500k"
         ingress_prio = int(class_id, 16)
 
         # EGRESS (download клиента): HTB на root qdisc, ловит пакеты dst={ip}/32
         egress_cmd = (
             f"if ! tc qdisc show dev {iface} | grep -q htb; then "
-            f"tc qdisc add dev {iface} root handle 1: htb default 9999 r2q 10 2>/dev/null || true; "
+            f"tc qdisc add dev {iface} root handle 1: htb default 9999 r2q 100 2>/dev/null || true; "
             f"fi; "
             f"tc class replace dev {iface} parent 1: classid 1:1 htb rate 1000mbit burst 500k cburst 500k quantum 200000 2>/dev/null || true; "
             f"tc class replace dev {iface} parent 1:1 classid 1:9999 htb rate 1000mbit ceil 1000mbit burst 500k cburst 500k quantum 200000 2>/dev/null || true; "
-            f"tc class replace dev {iface} parent 1:1 classid 1:{class_id} htb rate {rate} ceil {ceil} burst {burst} cburst {burst} quantum 25000; "
+            f"tc class replace dev {iface} parent 1:1 classid 1:{class_id} htb rate {rate} ceil {ceil} burst {burst} cburst {cburst} quantum 25000; "
             f"if ! tc filter show dev {iface} 2>/dev/null | grep -q {hex_ip}; then "
             f"tc filter add dev {iface} protocol ip parent 1:0 prio 1 u32 match ip dst {ip}/32 flowid 1:{class_id}; "
             f"fi"
@@ -97,7 +99,7 @@ def apply_limit(ip: str, speed: str, server_alias: str) -> bool:
     if target["host"] == "local":
         run_vpn_cmd(target, ["sh", "-c", cmd_str], capture=False)
     else:
-        _run_remote_tc(target["host"], target["port"], cmd_str, timeout=15)
+        _run_remote_tc(target["host"], target["port"], cmd_str, timeout=15, user=target.get("user") or "root")
     return True
 
 
