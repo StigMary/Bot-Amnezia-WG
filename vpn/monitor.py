@@ -7,8 +7,9 @@ import time
 from typing import Any
 
 from config import cfg, logger
+from database import get_all_users
 from vpn.peers import _get_amnezia_client_names, get_vpn_stats
-from vpn.transport import run_ssh_cmd
+from vpn.transport import run_ssh_cmd, run_vpn_cmd
 
 
 def get_node_metrics(node: dict) -> dict[str, Any] | None:
@@ -121,7 +122,7 @@ _sampler_started = False
 
 
 def _start_speed_sampler():
-    """Фоновый поток замера дельты трафика пиров (1 вызов awg show dump вместо 3)."""
+    """Фоновый поток замера дельты трафика пиров (опрос всех доступных нод)."""
     global _sampler_started
     if _sampler_started:
         return
@@ -132,51 +133,57 @@ def _start_speed_sampler():
         while True:
             sleep_time = 4.0
             try:
-                # Один вызов awg show awg0 dump вместо 3 отдельных docker exec
-                raw_dump = subprocess.check_output(
-                    ["docker", "exec", "amnezia-awg2", "awg", "show", "awg0", "dump"],
-                    text=True, timeout=5
-                )
-                names_map = _get_amnezia_client_names({"name": "amnezia-awg2", "host": "local"})
-
+                db_users = get_all_users()
                 now_t = time.time()
                 curr_trans = {}
                 active_list = []
 
-                for line in raw_dump.strip().splitlines()[1:]:
-                    parts = line.split("\t")
-                    if len(parts) >= 8:
-                        pkey = parts[0]
-                        allowed_ips = parts[3].split("/")[0].strip()
-                        hs = int(parts[4]) if parts[4].isdigit() else 0
-                        rx2 = int(parts[5]) if parts[5].isdigit() else 0
-                        tx2 = int(parts[6]) if parts[6].isdigit() else 0
+                for cont in cfg.vpn_containers:
+                    try:
+                        res = run_vpn_cmd(cont, ["awg", "show", cont.get("iface", "awg0"), "dump"], timeout=5)
+                        if not res or res.returncode != 0 or not res.stdout:
+                            continue
+                        raw_dump = res.stdout
+                        names_map = _get_amnezia_client_names(cont)
+                        alias = cont.get("alias", "")
 
-                        curr_trans[pkey] = (rx2, tx2)
+                        for line in raw_dump.strip().splitlines()[1:]:
+                            parts = line.split("\t")
+                            if len(parts) >= 8:
+                                pkey = parts[0]
+                                allowed_ips = parts[3].split("/")[0].strip()
+                                hs = int(parts[4]) if parts[4].isdigit() else 0
+                                rx2 = int(parts[5]) if parts[5].isdigit() else 0
+                                tx2 = int(parts[6]) if parts[6].isdigit() else 0
 
-                        # Клиент онлайн (рукопожатие за последние 3 минуты = 180с)
-                        if (now_t - hs) < 180 and hs > 0:
-                            drx = 0
-                            dtx = 0
-                            dt = 3.0
-                            if pkey in _speed_samples:
-                                rx1, tx1, t1 = _speed_samples[pkey]
-                                dt = max(1.0, now_t - t1)
-                                drx = max(0, rx2 - rx1)
-                                dtx = max(0, tx2 - tx1)
+                                curr_trans[pkey] = (rx2, tx2)
 
-                            ip = allowed_ips if allowed_ips and allowed_ips != "(none)" else "?"
-                            name = names_map.get(pkey) or names_map.get(ip) or ip
+                                # Клиент онлайн (рукопожатие за последние 3 минуты = 180с)
+                                if (now_t - hs) < 180 and hs > 0:
+                                    drx = 0
+                                    dtx = 0
+                                    dt = 4.0
+                                    if pkey in _speed_samples:
+                                        rx1, tx1, t1 = _speed_samples[pkey]
+                                        dt = max(1.0, now_t - t1)
+                                        drx = max(0, rx2 - rx1)
+                                        dtx = max(0, tx2 - tx1)
 
-                            active_list.append({
-                                "name": name,
-                                "ip": ip,
-                                "up_kb": round(drx / 1024, 1),
-                                "dn_kb": round(dtx / 1024, 1),
-                                "interval_sec": round(dt, 1),
-                                "total_kb": round((drx + dtx) / 1024, 1),
-                                "last_seen_sec": int(now_t - hs),
-                            })
+                                    ip = allowed_ips if allowed_ips and allowed_ips != "(none)" else "?"
+                                    name = (db_users.get(ip) or {}).get("alias") or names_map.get(pkey) or names_map.get(ip) or ip
+
+                                    active_list.append({
+                                        "name": name,
+                                        "ip": ip,
+                                        "server_alias": alias,
+                                        "up_kb": round(drx / 1024, 1),
+                                        "dn_kb": round(dtx / 1024, 1),
+                                        "interval_sec": round(dt, 1),
+                                        "total_kb": round((drx + dtx) / 1024, 1),
+                                        "last_seen_sec": int(now_t - hs),
+                                    })
+                    except Exception as ce:
+                        logger.debug(f"Speed sampler container {cont.get('alias')} error: {ce}")
 
                 for pkey, (rx2, tx2) in curr_trans.items():
                     _speed_samples[pkey] = (rx2, tx2, now_t)
@@ -275,7 +282,30 @@ def get_ru_monitor_data(force: bool = False) -> dict:
         top_total.sort(key=lambda x: x["dn_gb"], reverse=True)
 
         with _active_lock:
-            active_now = list(_current_active_now)
+            # Строгая фильтрация только клиентов RU сервера (исключаем 10.8.5.* и SE ноды)
+            ru_active = [
+                c for c in _current_active_now
+                if ("RU" in c.get("server_alias", "").split() or "🇷🇺" in c.get("server_alias", "") or c.get("ip", "").startswith("10.8.1."))
+                and not c.get("ip", "").startswith("10.8.5.")
+            ]
+
+        # Если фоновый замер ещё не успел отработать (первый запуск), берём онлайн пиров из ru_peers
+        if not ru_active:
+            now_t = time.time()
+            for p in ru_peers:
+                hs = p.get("handshake_ts", 0)
+                if (now_t - hs) < 180 and hs > 0:
+                    ru_active.append({
+                        "name": p.get("db_alias", p.get("ip", "?")),
+                        "ip": p.get("ip", "?"),
+                        "server_alias": p.get("server_alias", "RU"),
+                        "up_kb": 0.0,
+                        "dn_kb": 0.0,
+                        "interval_sec": 4.0,
+                        "total_kb": 0.0,
+                        "last_seen_sec": int(now_t - hs),
+                    })
+            ru_active.sort(key=lambda x: x["last_seen_sec"])
 
         events = [
             {"is_crash": False, "text": f"Xray Dokodemo Bridge работает штатно (PID {xray_pid})" if xray_ok else "Xray мост не запущен", "ts": "сейчас"},
@@ -287,7 +317,7 @@ def get_ru_monitor_data(force: bool = False) -> dict:
             "xray_pid": xray_pid,
             "conn_sw": conn_sw,
             "top_total": top_total,
-            "active_now": active_now,
+            "active_now": ru_active,
             "events": events
         }
         _ru_monitor_cache = data
